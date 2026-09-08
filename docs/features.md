@@ -34,3 +34,11 @@ Format:
 - Money `DECIMAL(14,2)`, quantities `DECIMAL(14,3)`; `organizationId` on all business records; org-scoped unique constraints on Loyverse IDs
 - Prisma 7.10.0 (stable; 8.0 is RC) with new config model: `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
 - Initial migration `20260909000000_init` generated via `prisma migrate diff` (offline, reproducible via `pnpm db:deploy`); `pnpm exec prisma validate` enforced in CI via `tests/schema.test.ts`
+
+## 2026-09-09 — Local dev environment: docker-compose + seed (#8)
+
+- `docker-compose.yml` (SPEC.md §23): Postgres 16 (host port **5433** — 5432 is commonly taken by a local install), Redis 7, MinIO + `minio-init` bucket provisioning, healthchecks throughout
+- `prisma/seed.ts`: dev admin (scrypt-hashed password; #3 Auth.js must reuse `verifyScryptPassword`), test org, Owner membership, example store + warehouse, 12-account baseline COA, baseline GL mappings (Cash/Card), example supplier (3-day lead time), example pay rule, `SalesReferenceRule` seeded at **3.3** (SPEC.md §8)
+- Credentials strictly from env (`SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` / `SEED_ORG_NAME`, §21); `pnpm db:seed` wired via `prisma.config.ts` migrations.seed
+- Verified end-to-end against the live compose stack: `db:deploy` applied `20260909000000_init`; seed ran and is idempotent (re-run keeps row counts stable)
+- README quickstart updated

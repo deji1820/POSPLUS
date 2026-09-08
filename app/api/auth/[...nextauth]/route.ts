@@ -1,6 +1,3 @@
-import { notImplemented } from "@/lib/api/not-implemented";
+import { handlers } from "@/lib/auth";
 
-export const runtime = "nodejs";
-
-export { notImplemented as GET };
-export { notImplemented as POST };
+export const { GET, POST } = handlers;

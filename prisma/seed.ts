@@ -15,9 +15,10 @@
  * Passwords use Node's built-in scrypt. Issue #3 (Auth.js) must verify
  * logins with the same `verifyScryptPassword` helper.
  */
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, Role, GLAccountType } from "@prisma/client";
+
+import { hashPassword } from "../lib/auth/password";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -33,20 +34,6 @@ const ADMIN_PASSWORD = requiredEnv("SEED_ADMIN_PASSWORD");
 const ORG_NAME = process.env.SEED_ORG_NAME ?? "POSPLUS Test Organization";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: DATABASE_URL }) });
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, 64).toString("hex");
-  return `scrypt:${salt}:${hash}`;
-}
-
-export function verifyScryptPassword(password: string, stored: string): boolean {
-  const [scheme, salt, hash] = stored.split(":");
-  if (scheme !== "scrypt" || !salt || !hash) return false;
-  const candidate = scryptSync(password, salt, 64);
-  const expected = Buffer.from(hash, "hex");
-  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
-}
 
 // Minimal, recognizable baseline chart of accounts.
 const BASELINE_COA: Array<{ code: string; name: string; type: GLAccountType }> = [

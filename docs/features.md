@@ -57,3 +57,14 @@ Format:
 - Verified end-to-end against the live compose stack (curl through the real Auth.js flow): credentials login → 302 `/dashboard` + session cookie; `/api/auth/session` returns `user.id`; authed `/dashboard` 200; authed `/login` → 307 `/dashboard`; anon `/dashboard` → 307 `/login`; wrong password → 302 `/login?error=CredentialsSignin` (no 500); smoke user cleaned up afterwards
 - Requires `AUTH_SECRET` (SPEC.md §22, already in `.env.example`)
 - No migration (uses #2 schema as-is)
+
+## 2026-09-09 — Tenant isolation + RBAC with store/warehouse scope (#4)
+
+- `lib/auth/permissions.ts`: module matrix per SPEC.md §5 — SETTINGS (Owner), FINANCE (Owner, Accountant), INVENTORY/PURCHASING/TRANSFERS (Owner, Store Manager, Warehouse Staff), PRODUCTION (Owner, Store Manager), WORKFORCE/PAYROLL (Owner, HR Admin), ANALYTICS (Owner, Store Manager, Accountant); fail-closed for unknown roles
+- `lib/auth/session-context.ts`: resolves the #3 session into `{ userId, orgId, role, storeIds, warehouseIds }` — ACTIVE `OrganizationMembership` required (401 `AUTH_REQUIRED` / 403 `ORG_MEMBERSHIP_REQUIRED`); multi-org via `posplus_active_org` cookie validated against memberships (org switcher UI lands with #37)
+- Store/warehouse scope: `UserStoreAccess`/`UserWarehouseAccess` rows are an *optional restriction* on STORE_MANAGER / WAREHOUSE_STAFF; scoped role with no rows = unrestricted within the org; other roles are org-wide
+- `lib/auth/guard.ts`: `withAuth({ module, storeId?, warehouseId? }, handler)` for API routes (static + dynamic overloads; store/warehouse ids resolved from route params) and `requireModule(module)` for server actions; denials return the §19 envelope (`AUTH_REQUIRED` 401, `FORBIDDEN` 403, `STORE_SCOPE_DENIED` / `WAREHOUSE_SCOPE_DENIED` 403); handlers receive the context — every query must scope by `ctx.orgId` (§18)
+- Reference pattern applied to three stub routes: `/api/finance/accounts` (FINANCE), `/api/purchasing/purchase-orders` (PURCHASING), `/api/workforce/employees` (WORKFORCE) — future issues wrap their routes the same way
+- Tests: `tests/permissions.test.ts` (full role×module allow/deny matrix), `tests/guard.test.ts` (context resolution incl. cookie org selection, module denials, cross-org store rejection, warehouse scope, dynamic params, `requireModule`); full gate green (typecheck / lint / 38 tests / build)
+- Verified end-to-end against the live compose stack: anon → 401 `AUTH_REQUIRED`; ACCOUNTANT → FINANCE gate passes (501 stub), PURCHASING and WORKFORCE → 403 `FORBIDDEN`; smoke user/org removed afterwards
+- No migration (uses #2 schema as-is)

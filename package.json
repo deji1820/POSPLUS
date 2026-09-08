@@ -4,9 +4,6 @@
   "private": true,
   "description": "POSPLUS (Loyverse+) — multi-tenant back-office/ERP layer for Loyverse POS",
   "packageManager": "pnpm@11.22.0",
-  "pnpm": {
-    "onlyBuiltDependencies": ["unrs-resolver"]
-  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

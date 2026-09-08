@@ -1,0 +1,10 @@
+// Full domain model lands with issue #2 (SPEC.md §8). This stub exists so
+// Prisma commands and CI can run against a valid schema file.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

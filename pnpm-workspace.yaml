@@ -1,6 +1,11 @@
 # pnpm 11 reads settings from this file (SPEC.md §3 dependency policy).
-# unrs-resolver (TS import resolver via eslint-config-next) must run its
-# native build script; pnpm 11's supply-chain policy otherwise hard-fails
-# install with ERR_PNPM_IGNORED_BUILDS.
+# Dependencies with native install scripts must be explicitly approved or
+# pnpm's supply-chain policy hard-fails install with ERR_PNPM_IGNORED_BUILDS.
+# unrs-resolver: TS import resolver (via eslint-config-next), needed at lint time.
 allowBuilds:
+  "@prisma/engines": true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true
   unrs-resolver: true
+  workerd: true

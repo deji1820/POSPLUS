@@ -1,10 +1,1387 @@
-// Full domain model lands with issue #2 (SPEC.md §8). This stub exists so
-// Prisma commands and CI can run against a valid schema file.
+// POSPLUS domain model — SPEC.md §8.
+// Conventions (docs/migrations.md):
+// - Money: Decimal(14,2). Quantities: Decimal(14,3). Rates: Decimal(9,4).
+// - Every business-domain record carries organizationId directly.
+// - Synced Loyverse entities: @@unique([organizationId, loyverseId]).
+// - Posted financial/payroll records are append-only; corrections are new records.
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  STORE_MANAGER
+  ACCOUNTANT
+  WAREHOUSE_STAFF
+  HR_ADMIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum SyncRunType {
+  INITIAL
+  INCREMENTAL
+  MANUAL
+}
+
+enum SyncRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum GLAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum JournalEntryStatus {
+  POSTED
+  REVERSED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum InventoryMovementType {
+  SALE
+  REFUND
+  RECEIPT
+  TRANSFER_OUT
+  TRANSFER_IN
+  PRODUCTION_CONSUME
+  PRODUCTION_OUTPUT
+  ADJUSTMENT
+}
+
+enum ReorderSuggestionStatus {
+  PENDING
+  ACCEPTED
+  DISMISSED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum ApprovalAction {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum StockTransferStatus {
+  REQUESTED
+  APPROVED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum BOMStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ProductionOrderStatus {
+  DRAFT
+  RELEASED
+  IN_PROGRESS
+  COMPLETED
+  CLOSED
+  CANCELLED
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  CALCULATING
+  REVIEW
+  APPROVED
+  FINALIZED
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveType {
+  VACATION
+  SICK
+  PERSONAL
+  UNPAID
+}
+
+enum DocumentStatus {
+  PENDING
+  GENERATED
+  FAILED
+}
+
+enum OutboxEventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Identity / tenancy (SPEC.md §5, §8)
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  currency  String   @default("USD")
+  timezone  String   @default("UTC")
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships                  OrganizationMembership[]
+  stores                       Store[]
+  warehouses                   Warehouse[]
+  connection                   LoyverseConnection?
+  webhookEvents                WebhookEvent[]
+  syncRuns                     SyncRun[]
+  categories                   Category[]
+  items                        Item[]
+  variants                     Variant[]
+  employees                    Employee[]
+  customers                    Customer[]
+  receipts                     Receipt[]
+  refunds                      Refund[]
+  glAccounts                   GLAccount[]
+  glMappings                   GLMapping[]
+  journalEntries               JournalEntry[]
+  fiscalPeriods                FiscalPeriod[]
+  arInvoices                   ARInvoice[]
+  apBills                      APBill[]
+  payments                     Payment[]
+  inventoryBalances            InventoryBalance[]
+  inventoryMovements           InventoryMovement[]
+  reorderSuggestions           ReorderSuggestion[]
+  suppliers                    Supplier[]
+  scorecardSnapshots           SupplierScorecardSnapshot[]
+  supplierIngredientPrices     SupplierIngredientPrice[]
+  ingredientPriceHistory       IngredientPriceHistory[]
+  priceChangeAlerts            PriceChangeAlert[]
+  supplierPriceRecommendations SupplierPriceRecommendation[]
+  purchaseOrders               PurchaseOrder[]
+  goodsReceipts                GoodsReceipt[]
+  stockTransfers               StockTransfer[]
+  boms                         BOM[]
+  unitOfMeasures               UnitOfMeasure[]
+  productionOrders             ProductionOrder[]
+  employeePayRules             EmployeePayRule[]
+  shifts                       Shift[]
+  payrollPeriods               PayrollPeriod[]
+  payrollRuns                  PayrollRun[]
+  leaveRequests                LeaveRequest[]
+  leaveBalances                LeaveBalance[]
+  statutoryDeductionRules      StatutoryDeductionRule[]
+  commissaries                 Commissary[]
+  dashboardPreferences         DashboardPreference[]
+  dashboardMetricSnapshots     DashboardMetricSnapshot[]
+  priceAlertRules              PriceAlertRule[]
+  salesReferenceRules          SalesReferenceRule[]
+  auditLogs                    AuditLog[]
+  documents                    Document[]
+  outboxEvents                 OutboxEvent[]
+  idempotencyKeys              IdempotencyKey[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships          OrganizationMembership[]
+  storeAccess          UserStoreAccess[]
+  warehouseAccess      UserWarehouseAccess[]
+  dashboardPreferences DashboardPreference[]
+  auditLogs            AuditLog[]
+}
+
+model OrganizationMembership {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role             @default(WAREHOUSE_STAFF)
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model Store {
+  id              String   @id @default(cuid())
+  organizationId  String
+  loyverseStoreId String?
+  name            String
+  address         String?
+  timezone        String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization            Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouses              Warehouse[]
+  userAccess              UserStoreAccess[]
+  receipts                Receipt[]
+  shifts                  Shift[]
+  storeApplicableAccounts GLAccount[]
+
+  @@unique([organizationId, loyverseStoreId])
+  @@index([organizationId])
+}
+
+model Warehouse {
+  id             String   @id @default(cuid())
+  organizationId String
+  storeId        String?
+  name           String
+  code           String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization              Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store                     Store?                @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  userAccess                UserWarehouseAccess[]
+  inventoryBalances         InventoryBalance[]
+  inventoryMovements        InventoryMovement[]
+  reorderSuggestions        ReorderSuggestion[]
+  purchaseOrderDestinations PurchaseOrder[]
+  stockTransfersFrom        StockTransfer[]       @relation("TransferFrom")
+  stockTransfersTo          StockTransfer[]       @relation("TransferTo")
+  commissaries              Commissary[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+model UserStoreAccess {
+  id      String @id @default(cuid())
+  userId  String
+  storeId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+}
+
+model UserWarehouseAccess {
+  id          String @id @default(cuid())
+  userId      String
+  warehouseId String
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, warehouseId])
+}
+
+// ---------------------------------------------------------------------------
+// Loyverse integration (SPEC.md §8, §9)
+// ---------------------------------------------------------------------------
+
+model LoyverseConnection {
+  id              String    @id @default(cuid())
+  organizationId  String    @unique
+  encryptedApiKey String
+  keyVersion      String
+  status          String    @default("connected")
+  lastSyncAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id                String             @id @default(cuid())
+  organizationId    String
+  externalEventId   String
+  eventType         String
+  signatureVerified Boolean            @default(false)
+  payloadHash       String
+  receivedAt        DateTime           @default(now())
+  processedAt       DateTime?
+  status            WebhookEventStatus @default(RECEIVED)
+  error             String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, externalEventId])
+  @@index([organizationId, status])
+}
+
+model SyncRun {
+  id             String        @id @default(cuid())
+  organizationId String
+  type           SyncRunType
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  status         SyncRunStatus @default(RUNNING)
+  counts         Json?
+  errorSummary   String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Synced master data (SPEC.md §8)
+// ---------------------------------------------------------------------------
+
+model Category {
+  id             String  @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  name           String
+  parentId       String?
+  active         Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       Category?    @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Category[]   @relation("CategoryChildren")
+  items        Item[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+}
+
+model Item {
+  id             String  @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  categoryId     String?
+  name           String
+  itemType       String?
+  active         Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  variants     Variant[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+}
+
+model Variant {
+  id             String   @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  itemId         String
+  name           String
+  sku            String?
+  price          Decimal? @db.Decimal(14, 2)
+  defaultCost    Decimal? @db.Decimal(14, 2)
+  active         Boolean  @default(true)
+
+  organization           Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item                   Item                          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  receiptLines           ReceiptLine[]
+  refundLines            RefundLine[]
+  inventoryBalances      InventoryBalance[]
+  inventoryMovements     InventoryMovement[]
+  reorderSuggestions     ReorderSuggestion[]
+  supplierPrices         SupplierIngredientPrice[]
+  priceHistory           IngredientPriceHistory[]
+  priceChangeAlerts      PriceChangeAlert[]
+  priceRecommendations   SupplierPriceRecommendation[]
+  purchaseOrderLines     PurchaseOrderLine[]
+  stockTransferLines     StockTransferLine[]
+  bomLines               BOMLine[]
+  productionConsumptions ProductionConsumption[]
+  productionOutputs      ProductionOutput[]
+  productionWastes       ProductionWaste[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+  @@index([itemId])
+}
+
+model Employee {
+  id             String  @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  name           String
+  email          String?
+  loyverseRole   String?
+  active         Boolean @default(true)
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  receipts      Receipt[]
+  payRules      EmployeePayRule[]
+  shifts        Shift[]
+  payrollLines  PayrollLine[]
+  leaveRequests LeaveRequest[]
+  leaveBalances LeaveBalance[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+}
+
+model Customer {
+  id             String  @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  name           String
+  email          String?
+  phone          String?
+  active         Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  receipts     Receipt[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+}
+
+model Receipt {
+  id             String   @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  storeId        String
+  employeeId     String?
+  customerId     String?
+  receiptNumber  String?
+  paymentType    String?
+  subtotal       Decimal  @db.Decimal(14, 2)
+  total          Decimal  @db.Decimal(14, 2)
+  openedAt       DateTime
+  createdAt      DateTime @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  employee     Employee?     @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  lines        ReceiptLine[]
+  refunds      Refund[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId, storeId])
+  @@index([organizationId, openedAt])
+}
+
+model ReceiptLine {
+  id             String  @id @default(cuid())
+  receiptId      String
+  organizationId String
+  variantId      String?
+  itemName       String?
+  quantity       Decimal @db.Decimal(14, 3)
+  price          Decimal @db.Decimal(14, 2)
+  total          Decimal @db.Decimal(14, 2)
+
+  receipt Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  variant Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([receiptId])
+  @@index([organizationId, variantId])
+}
+
+model Refund {
+  id             String   @id @default(cuid())
+  organizationId String
+  loyverseId     String
+  receiptId      String
+  total          Decimal  @db.Decimal(14, 2)
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  receipt      Receipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  lines        RefundLine[]
+
+  @@unique([organizationId, loyverseId])
+  @@index([organizationId])
+}
+
+model RefundLine {
+  id             String  @id @default(cuid())
+  refundId       String
+  organizationId String
+  variantId      String?
+  itemName       String?
+  quantity       Decimal @db.Decimal(14, 3)
+  price          Decimal @db.Decimal(14, 2)
+  total          Decimal @db.Decimal(14, 2)
+
+  refund  Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  variant Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([refundId])
+  @@index([organizationId, variantId])
+}
+
+// ---------------------------------------------------------------------------
+// Finance (SPEC.md §8, §11) — posted entries are append-only
+// ---------------------------------------------------------------------------
+
+model GLAccount {
+  id             String        @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  type           GLAccountType
+  active         Boolean       @default(true)
+  storeId        String? // null = company-wide applicability
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store        Store?        @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  mappings     GLMapping[]
+  journalLines JournalLine[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+model GLMapping {
+  id             String  @id @default(cuid())
+  organizationId String
+  paymentType    String?
+  categoryId     String?
+  accountId      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      GLAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model JournalEntry {
+  id             String             @id @default(cuid())
+  organizationId String
+  entryNumber    String?
+  storeId        String?
+  fiscalPeriodId String?
+  status         JournalEntryStatus @default(POSTED)
+  description    String?
+  postedAt       DateTime           @default(now())
+  createdById    String?
+  reversalOfId   String?            @unique
+  reversedById   String?            @unique
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalPeriod FiscalPeriod?     @relation(fields: [fiscalPeriodId], references: [id], onDelete: SetNull)
+  lines        JournalLine[]
+  sourceLink   LedgerSourceLink?
+  reversalOf   JournalEntry?     @relation("EntryReversal", fields: [reversalOfId], references: [id])
+  reversedBy   JournalEntry?     @relation("EntryReversal")
+
+  @@index([organizationId, postedAt])
+}
+
+model JournalLine {
+  id             String  @id @default(cuid())
+  journalEntryId String
+  organizationId String
+  accountId      String
+  debit          Decimal @default(0) @db.Decimal(14, 2)
+  credit         Decimal @default(0) @db.Decimal(14, 2)
+  memo           String?
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      GLAccount    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([organizationId, accountId])
+}
+
+model FiscalPeriod {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  closed         Boolean  @default(false)
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  journalEntries JournalEntry[]
+
+  @@index([organizationId, startDate])
+}
+
+model ARInvoice {
+  id             String        @id @default(cuid())
+  organizationId String
+  number         String
+  customerName   String
+  amount         Decimal       @db.Decimal(14, 2)
+  balance        Decimal       @db.Decimal(14, 2)
+  status         InvoiceStatus @default(OPEN)
+  issuedAt       DateTime      @default(now())
+  dueDate        DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@index([organizationId, status])
+}
+
+model APBill {
+  id             String        @id @default(cuid())
+  organizationId String
+  number         String
+  supplierName   String
+  amount         Decimal       @db.Decimal(14, 2)
+  balance        Decimal       @db.Decimal(14, 2)
+  status         InvoiceStatus @default(OPEN)
+  issuedAt       DateTime      @default(now())
+  dueDate        DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@index([organizationId, status])
+}
+
+model Payment {
+  id             String   @id @default(cuid())
+  organizationId String
+  arInvoiceId    String?
+  apBillId       String?
+  amount         Decimal  @db.Decimal(14, 2)
+  method         String
+  paidAt         DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  arInvoice    ARInvoice?   @relation(fields: [arInvoiceId], references: [id], onDelete: SetNull)
+  apBill       APBill?      @relation(fields: [apBillId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
+model LedgerSourceLink {
+  id                String   @id @default(cuid())
+  journalEntryId    String   @unique
+  organizationId    String
+  storeId           String?
+  loyverseReceiptId String?
+  paymentType       String?
+  sourceTotal       Decimal? @db.Decimal(14, 2)
+  postedAt          DateTime @default(now())
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, loyverseReceiptId])
+}
+
+// ---------------------------------------------------------------------------
+// Inventory / procurement (SPEC.md §8)
+// ---------------------------------------------------------------------------
+
+model InventoryBalance {
+  id             String   @id @default(cuid())
+  organizationId String
+  warehouseId    String
+  variantId      String
+  onHand         Decimal  @default(0) @db.Decimal(14, 3)
+  reserved       Decimal  @default(0) @db.Decimal(14, 3)
+  reorderPoint   Decimal? @db.Decimal(14, 3)
+  targetStock    Decimal? @db.Decimal(14, 3)
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant      Variant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, variantId])
+  @@index([organizationId])
+}
+
+model InventoryMovement {
+  id             String                @id @default(cuid())
+  organizationId String
+  warehouseId    String
+  variantId      String
+  quantityDelta  Decimal               @db.Decimal(14, 3)
+  type           InventoryMovementType
+  referenceType  String? // e.g. PURCHASE_ORDER, STOCK_TRANSFER, PRODUCTION_ORDER
+  referenceId    String?
+  actorId        String?
+  createdAt      DateTime              @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant      Variant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([warehouseId, variantId])
+}
+
+model ReorderSuggestion {
+  id                String                  @id @default(cuid())
+  organizationId    String
+  storeId           String?
+  warehouseId       String
+  variantId         String
+  averageDailySales Decimal                 @db.Decimal(14, 3)
+  leadTimeDays      Int
+  safetyStockDays   Int
+  reorderPoint      Decimal                 @db.Decimal(14, 3)
+  suggestedQty      Decimal                 @db.Decimal(14, 3)
+  reason            Json?
+  status            ReorderSuggestionStatus @default(PENDING)
+  createdAt         DateTime                @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant      Variant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+}
+
+model Supplier {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  contactEmail   String?
+  contactPhone   String?
+  leadTimeDays   Int?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization         Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scorecards           SupplierScorecardSnapshot[]
+  ingredientPrices     SupplierIngredientPrice[]
+  priceHistory         IngredientPriceHistory[]
+  priceRecommendations SupplierPriceRecommendation[]
+  priceChangeAlerts    PriceChangeAlert[]
+  purchaseOrders       PurchaseOrder[]
+
+  @@index([organizationId])
+}
+
+model SupplierScorecardSnapshot {
+  id               String   @id @default(cuid())
+  organizationId   String
+  supplierId       String
+  onTimeRate       Decimal? @db.Decimal(7, 2)
+  quantityAccuracy Decimal? @db.Decimal(7, 2)
+  computedAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier     Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, supplierId, computedAt])
+}
+
+model SupplierIngredientPrice {
+  id              String   @id @default(cuid())
+  organizationId  String
+  supplierId      String
+  ingredientId    String // Variant (ingredient/raw material)
+  unitPrice       Decimal  @db.Decimal(14, 2)
+  recordedAt      DateTime @default(now())
+  purchaseOrderId String?
+  goodsReceiptId  String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier     Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  ingredient   Variant      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, ingredientId])
+}
+
+model IngredientPriceHistory {
+  id             String   @id @default(cuid())
+  organizationId String
+  ingredientId   String
+  supplierId     String?
+  unitPrice      Decimal  @db.Decimal(14, 2)
+  sourceType     String? // GOODS_RECEIPT, ENCODED_QUOTE, PURCHASE_ORDER
+  sourceId       String?
+  recordedAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ingredient   Variant      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  supplier     Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, ingredientId, recordedAt])
+}
+
+model PriceChangeAlert {
+  id               String    @id @default(cuid())
+  organizationId   String
+  ingredientId     String
+  supplierId       String?
+  plannedPrice     Decimal   @db.Decimal(14, 2)
+  actualPrice      Decimal   @db.Decimal(14, 2)
+  absoluteVariance Decimal   @db.Decimal(14, 2)
+  percentVariance  Decimal   @db.Decimal(7, 2)
+  severity         String    @default("info")
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ingredient   Variant      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  supplier     Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+}
+
+model SupplierPriceRecommendation {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  ingredientId          String
+  recommendedSupplierId String
+  price                 Decimal? @db.Decimal(14, 2)
+  leadTimeDays          Int?
+  reliability           Decimal? @db.Decimal(7, 2)
+  rationale             Json?
+  generatedAt           DateTime @default(now())
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ingredient          Variant      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  recommendedSupplier Supplier     @relation(fields: [recommendedSupplierId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, ingredientId, generatedAt])
+}
+
+model PurchaseOrder {
+  id                     String              @id @default(cuid())
+  organizationId         String
+  number                 String
+  supplierId             String
+  destinationWarehouseId String
+  status                 PurchaseOrderStatus @default(DRAFT)
+  subtotal               Decimal             @default(0) @db.Decimal(14, 2)
+  total                  Decimal             @default(0) @db.Decimal(14, 2)
+  submittedAt            DateTime?
+  approvedAt             DateTime?
+  receivedAt             DateTime?
+  createdById            String?
+  approvedById           String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  organization         Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier             Supplier                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  destinationWarehouse Warehouse               @relation(fields: [destinationWarehouseId], references: [id], onDelete: Cascade)
+  lines                PurchaseOrderLine[]
+  approvals            PurchaseOrderApproval[]
+  goodsReceipts        GoodsReceipt[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+}
+
+model PurchaseOrderLine {
+  id               String  @id @default(cuid())
+  purchaseOrderId  String
+  organizationId   String
+  variantId        String
+  quantity         Decimal @db.Decimal(14, 3)
+  unitPrice        Decimal @db.Decimal(14, 2)
+  receivedQuantity Decimal @default(0) @db.Decimal(14, 3)
+
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  variant           Variant            @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@index([purchaseOrderId])
+}
+
+model PurchaseOrderApproval {
+  id              String         @id @default(cuid())
+  purchaseOrderId String
+  actorId         String
+  action          ApprovalAction
+  comment         String?
+  createdAt       DateTime       @default(now())
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+}
+
+model GoodsReceipt {
+  id              String   @id @default(cuid())
+  organizationId  String
+  purchaseOrderId String
+  receivedAt      DateTime @default(now())
+  actorId         String
+  idempotencyKey  String?  @unique
+
+  organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  lines         GoodsReceiptLine[]
+
+  @@index([organizationId, receivedAt])
+}
+
+model GoodsReceiptLine {
+  id                  String  @id @default(cuid())
+  goodsReceiptId      String
+  purchaseOrderLineId String
+  quantity            Decimal @db.Decimal(14, 3)
+
+  goodsReceipt      GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLine PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Cascade)
+}
+
+model StockTransfer {
+  id              String              @id @default(cuid())
+  organizationId  String
+  fromWarehouseId String
+  toWarehouseId   String
+  status          StockTransferStatus @default(REQUESTED)
+  requestedById   String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fromWarehouse Warehouse           @relation("TransferFrom", fields: [fromWarehouseId], references: [id], onDelete: Cascade)
+  toWarehouse   Warehouse           @relation("TransferTo", fields: [toWarehouseId], references: [id], onDelete: Cascade)
+  lines         StockTransferLine[]
+
+  @@index([organizationId, status])
+}
+
+model StockTransferLine {
+  id              String  @id @default(cuid())
+  stockTransferId String
+  variantId       String
+  quantity        Decimal @db.Decimal(14, 3)
+
+  stockTransfer StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  variant       Variant       @relation(fields: [variantId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Manufacturing (SPEC.md §8, §14)
+// ---------------------------------------------------------------------------
+
+model BOM {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  itemId         String? // Loyverse composite item this recipe produces
+  variantId      String? // output variant, where applicable
+  expectedYield  Decimal   @db.Decimal(14, 3)
+  wasteAllowance Decimal   @default(0) @db.Decimal(14, 3)
+  status         BOMStatus @default(DRAFT)
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lines            BOMLine[]
+  productionOrders ProductionOrder[]
+
+  @@index([organizationId, status])
+}
+
+model BOMLine {
+  id                 String   @id @default(cuid())
+  bomId              String
+  componentVariantId String
+  quantity           Decimal  @db.Decimal(14, 3)
+  unitId             String?
+  wastagePct         Decimal? @db.Decimal(7, 2)
+
+  bom              BOM            @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  componentVariant Variant        @relation(fields: [componentVariantId], references: [id], onDelete: Restrict)
+  unit             UnitOfMeasure? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+}
+
+model UnitOfMeasure {
+  id              String  @id @default(cuid())
+  organizationId  String
+  name            String
+  abbreviation    String?
+  precisionDigits Int     @default(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bomLines     BOMLine[]
+
+  @@unique([organizationId, name])
+}
+
+model ProductionOrder {
+  id             String                @id @default(cuid())
+  organizationId String
+  bomId          String
+  number         String
+  plannedQty     Decimal               @db.Decimal(14, 3)
+  actualQty      Decimal?              @db.Decimal(14, 3)
+  status         ProductionOrderStatus @default(DRAFT)
+  plannedCost    Decimal?              @db.Decimal(14, 2)
+  actualCost     Decimal?              @db.Decimal(14, 2)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bom          BOM                     @relation(fields: [bomId], references: [id], onDelete: Restrict)
+  consumptions ProductionConsumption[]
+  outputs      ProductionOutput[]
+  wastes       ProductionWaste[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+}
+
+model ProductionConsumption {
+  id                 String   @id @default(cuid())
+  productionOrderId  String
+  componentVariantId String
+  plannedQty         Decimal  @db.Decimal(14, 3)
+  actualQty          Decimal? @db.Decimal(14, 3)
+
+  productionOrder  ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  componentVariant Variant         @relation(fields: [componentVariantId], references: [id], onDelete: Restrict)
+}
+
+model ProductionOutput {
+  id                String  @id @default(cuid())
+  productionOrderId String
+  variantId         String
+  quantity          Decimal @db.Decimal(14, 3)
+
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  variant         Variant         @relation(fields: [variantId], references: [id], onDelete: Restrict)
+}
+
+model ProductionWaste {
+  id                 String  @id @default(cuid())
+  productionOrderId  String
+  componentVariantId String?
+  quantity           Decimal @db.Decimal(14, 3)
+  reason             String?
+
+  productionOrder  ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  componentVariant Variant?        @relation(fields: [componentVariantId], references: [id], onDelete: SetNull)
+}
+
+// ---------------------------------------------------------------------------
+// Workforce (SPEC.md §8, §15)
+// ---------------------------------------------------------------------------
+
+model EmployeePayRule {
+  id             String   @id @default(cuid())
+  organizationId String
+  employeeId     String
+  rate           Decimal  @db.Decimal(14, 2)
+  overtimeRate   Decimal? @db.Decimal(14, 2)
+  effectiveFrom  DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, employeeId])
+}
+
+model Shift {
+  id              String    @id @default(cuid())
+  organizationId  String
+  employeeId      String
+  storeId         String?
+  loyverseShiftId String?
+  clockIn         DateTime
+  clockOut        DateTime?
+  approved        Boolean   @default(false)
+  exceptions      Json?
+  createdAt       DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store        Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, clockIn])
+  @@index([employeeId])
+}
+
+model PayrollPeriod {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payrollRuns  PayrollRun[]
+
+  @@index([organizationId, startDate])
+}
+
+model PayrollRun {
+  id              String           @id @default(cuid())
+  organizationId  String
+  payrollPeriodId String
+  status          PayrollRunStatus @default(DRAFT)
+  totalGross      Decimal?         @db.Decimal(14, 2)
+  totalDeductions Decimal?         @db.Decimal(14, 2)
+  totalNet        Decimal?         @db.Decimal(14, 2)
+  calculatedAt    DateTime?
+  finalizedAt     DateTime?
+  createdById     String?
+  approvedById    String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  lines         PayrollLine[]
+
+  @@index([organizationId, status])
+}
+
+model PayrollLine {
+  id             String  @id @default(cuid())
+  payrollRunId   String
+  organizationId String
+  employeeId     String
+  regularHours   Decimal @db.Decimal(14, 2)
+  overtimeHours  Decimal @default(0) @db.Decimal(14, 2)
+  gross          Decimal @db.Decimal(14, 2)
+  deductions     Decimal @default(0) @db.Decimal(14, 2)
+  net            Decimal @db.Decimal(14, 2)
+  adjustments    Json?
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([payrollRunId])
+}
+
+model LeaveRequest {
+  id             String             @id @default(cuid())
+  organizationId String
+  employeeId     String
+  type           LeaveType
+  startDate      DateTime
+  endDate        DateTime
+  reason         String?
+  status         LeaveRequestStatus @default(PENDING)
+  reviewedById   String?
+  createdAt      DateTime           @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+}
+
+model LeaveBalance {
+  id             String    @id @default(cuid())
+  organizationId String
+  employeeId     String
+  type           LeaveType
+  year           Int
+  totalDays      Decimal   @db.Decimal(7, 2)
+  usedDays       Decimal   @default(0) @db.Decimal(7, 2)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, employeeId, type, year])
+}
+
+model StatutoryDeductionRule {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  rate           Decimal? @db.Decimal(9, 4)
+  fixedAmount    Decimal? @db.Decimal(14, 2)
+  config         Json?
+  effectiveFrom  DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard / operational dimensions (SPEC.md §8, §16)
+// ---------------------------------------------------------------------------
+
+model Commissary {
+  id             String  @id @default(cuid())
+  organizationId String
+  name           String
+  warehouseId    String? // commissary inventory scope
+  active         Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse?   @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
+model DashboardPreference {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  mode           String? // stores | commissary
+  scope          Json?
+  period         Json?
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model DashboardMetricSnapshot {
+  id             String   @id @default(cuid())
+  organizationId String
+  metricKey      String
+  mode           String? // stores | commissary | executive
+  storeId        String?
+  commissaryId   String?
+  periodFrom     DateTime
+  periodTo       DateTime
+  value          Decimal? @db.Decimal(14, 2)
+  payload        Json?
+  computedAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, metricKey, computedAt])
+}
+
+model PriceAlertRule {
+  id               String  @id @default(cuid())
+  organizationId   String
+  thresholdPercent Decimal @default(10) @db.Decimal(7, 2)
+  enabled          Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model SalesReferenceRule {
+  id             String  @id @default(cuid())
+  organizationId String
+  multiplier     Decimal @default(3.3) @db.Decimal(9, 4)
+  active         Boolean @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting (SPEC.md §8, §17)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorUserId    String?
+  action         String
+  entityType     String
+  entityId       String
+  beforeJson     Json?
+  afterJson      Json?
+  metadataJson   Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model Document {
+  id             String         @id @default(cuid())
+  organizationId String
+  entityType     String
+  entityId       String
+  storageKey     String
+  contentType    String
+  checksum       String
+  status         DocumentStatus @default(PENDING)
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, entityType, entityId])
+}
+
+model OutboxEvent {
+  id             String            @id @default(cuid())
+  organizationId String
+  type           String
+  payload        Json
+  status         OutboxEventStatus @default(PENDING)
+  createdAt      DateTime          @default(now())
+  processedAt    DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+}
+
+model IdempotencyKey {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  requestHash    String?
+  response       Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
 }

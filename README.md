@@ -21,4 +21,25 @@ Next.js (App Router) · TypeScript · Prisma · PostgreSQL (Railway) · Redis + 
 
 ## Development
 
-> Not yet implemented — Sprint 1 issues (see [GitHub Issues](https://github.com/deji1820/POSPLUS/issues)) cover scaffolding, the database schema, auth, and the Loyverse sync pipeline. Local dev will use `docker compose` (PostgreSQL, Redis, MinIO) per SPEC.md §23.
+Requires Node.js 24+ and pnpm 11+.
+
+```bash
+# 1. Start local infra (PostgreSQL, Redis, MinIO) — SPEC.md §23
+docker compose up -d
+
+# 2. Configure environment
+cp .env.example .env
+# Fill in at minimum:
+#   DATABASE_URL=postgresql://posplus:posplus@localhost:5433/posplus
+#   SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, SEED_ORG_NAME (SPEC.md §21)
+
+# 3. Install, migrate, seed
+pnpm install
+pnpm db:deploy     # applies prisma/migrations (issue #2)
+pnpm db:seed       # dev admin + test organization (issue #8)
+
+# 4. Run
+pnpm dev           # http://localhost:3000
+```
+
+Checks: `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm build`

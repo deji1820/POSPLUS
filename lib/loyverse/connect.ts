@@ -8,6 +8,7 @@
  *   - an INITIAL sync run is recorded as QUEUED; the worker that consumes it
  *     lands with #6 (BullMQ) / #7 (initial sync).
  */
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { prisma } from "@/lib/db";
 import { encryptSecret } from "@/lib/encryption";
 import { validateApiKey } from "@/lib/loyverse/client";
@@ -58,6 +59,7 @@ export function sanitizeConnection(
 export async function connectLoyverse(
   organizationId: string,
   rawApiKey: string,
+  actorUserId?: string | null,
 ): Promise<SanitizedConnection> {
   const apiKey = rawApiKey.trim();
   if (!apiKey) {
@@ -112,6 +114,22 @@ export async function connectLoyverse(
       },
     }),
   ]);
+
+  // §17: the credential-change audit row. afterJson carries only the
+  // sanitized observable state — NEVER the key material or its envelope.
+  await writeAudit({
+    organizationId,
+    actorUserId: actorUserId ?? null,
+    action: AUDIT_ACTIONS.INTEGRATION.CONNECTED,
+    entityType: "LoyverseConnection",
+    entityId: connection.id,
+    afterJson: {
+      status: connection.status,
+      merchantId: connection.merchantId,
+      keyVersion: connection.keyVersion,
+      initialSyncRunId: run.id,
+    },
+  });
 
   // Schedule the INITIAL sync on the worker (SPEC.md §9). The connection is
   // already committed, so an unreachable queue must not fail the connect —

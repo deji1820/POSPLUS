@@ -27,7 +27,7 @@ export async function connectLoyverseAction(
   try {
     const ctx = await requireModule("SETTINGS");
     const apiKey = String(formData.get("apiKey") ?? "");
-    await connectLoyverse(ctx.orgId, apiKey);
+    await connectLoyverse(ctx.orgId, apiKey, ctx.userId);
     revalidatePath("/settings/loyverse");
     return { ok: true, message: "Connected. Initial sync queued." };
   } catch (error) {

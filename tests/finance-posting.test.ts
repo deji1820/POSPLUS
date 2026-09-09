@@ -140,7 +140,7 @@ describe("postReceiptToLedger", () => {
     });
   });
 
-  it("writes one journal.posted audit row with sanitized metadata", async () => {
+  it("writes one journal.posted audit row with sanitized metadata + after JSON (§17)", async () => {
     await postReceiptToLedger("org-1", "rec-1");
     expect(mocks.auditLogCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -154,6 +154,13 @@ describe("postReceiptToLedger", () => {
           loyverseRefundId: null,
           paymentType: "Cash",
           total: "10.00",
+        },
+        afterJson: {
+          journalEntryId: "je-1",
+          source: "receipt",
+          total: "10.00",
+          lineCount: 3,
+          storeId: "store-1",
         },
       }),
     });

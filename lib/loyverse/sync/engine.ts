@@ -30,6 +30,7 @@ import {
 } from "@/lib/loyverse/records";
 import { prisma } from "@/lib/db";
 import { decryptSecret } from "@/lib/encryption";
+import { ensureBaselineCoa } from "@/lib/finance/baseline";
 import { TransientJobError, UnrecoverableError } from "@/lib/queue/errors";
 import { jobLog } from "@/worker/log";
 
@@ -153,9 +154,11 @@ export async function runLoyverseSync(
     data: { lastSyncAt: new Date() },
   });
 
-  // Step 11 — post-sync setup checklist (default COA / GL mappings) is the
-  // #10 follow-up; hook it here when that lands.
-  jobLog(jobId, "sync complete", { counts });
+  // Step 11 — post-sync setup checklist: baseline chart of accounts + default
+  // GL mappings (#10) so the next issue's auto-posting has accounts to post
+  // into. Idempotent — existing accounts/mappings are never overwritten.
+  const baseline = await ensureBaselineCoa(orgId);
+  jobLog(jobId, "sync complete", { counts, baselineAccounts: baseline.accounts });
   return { counts };
 }
 

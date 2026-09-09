@@ -85,6 +85,11 @@ describe("processor registry", () => {
     expect(resolveProcessor("incremental-loyverse-sync")).toBeDefined();
   });
 
+  it("resolves the real processor for process-loyverse-webhook (#9)", async () => {
+    const { processLoyverseWebhookJob } = await import("@/worker/processors/loyverse-webhook");
+    expect(resolveProcessor("process-loyverse-webhook")).toBe(processLoyverseWebhookJob);
+  });
+
   it("routes unimplemented job names to a permanent dead-letter stub", async () => {
     const stub = resolveProcessor("calculate-payroll");
     const { UnrecoverableError } = await import("bullmq");

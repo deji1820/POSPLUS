@@ -30,6 +30,7 @@ export interface SanitizedConnection {
   organizationId: string;
   status: string;
   keyVersion: string;
+  merchantId: string | null;
   lastSyncAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -43,6 +44,7 @@ export function sanitizeConnection(
     organizationId: connection.organizationId,
     status: connection.status,
     keyVersion: connection.keyVersion,
+    merchantId: connection.merchantId,
     lastSyncAt: connection.lastSyncAt,
     createdAt: connection.createdAt,
     updatedAt: connection.updatedAt,
@@ -92,11 +94,13 @@ export async function connectLoyverse(
         organizationId,
         encryptedApiKey: envelope,
         keyVersion,
+        merchantId: check.merchantId,
         status: "connected",
       },
       update: {
         encryptedApiKey: envelope,
         keyVersion,
+        merchantId: check.merchantId,
         status: "connected",
       },
     }),

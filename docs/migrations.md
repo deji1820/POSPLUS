@@ -32,4 +32,6 @@ Read this before any schema change. Required by `auto-dev.md`.
 
 | Date | Migration | Notes |
 |---|---|---|
-| — | — | No migrations yet — schema lands with Sprint 1 |
+| 2026-09-09 | `20260909000000_init` | Full §8 domain model — 68 tables, initial baseline |
+
+Note: Prisma 7 config lives in `prisma.config.ts` (connection URL is no longer in `schema.prisma`). Prisma CLI commands require `DATABASE_URL` to be set — export it or use `.env` with your shell.

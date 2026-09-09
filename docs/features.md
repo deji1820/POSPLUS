@@ -27,3 +27,10 @@ Format:
 - Tooling: ESLint 9 (`eslint-config-next` flat config), Prettier, Vitest (`tests/envelope.test.ts`), GitHub Actions CI (typecheck + lint + test)
 - `.env.example` per SPEC.md §22; CHANGELOG.md records TS/ESLint pin decisions
 - No migration (no schema yet — lands with #2)
+
+## 2026-09-09 — Prisma schema, full domain model (#2)
+
+- 68 tables covering every entity in SPEC.md §8: identity/tenancy, Loyverse integration, synced master data, finance (GL, journal, AP/AR), inventory/procurement, manufacturing, workforce, dashboard dimensions (incl. `SalesReferenceRule` default 3.3), audit/documents/outbox/idempotency
+- Money `DECIMAL(14,2)`, quantities `DECIMAL(14,3)`; `organizationId` on all business records; org-scoped unique constraints on Loyverse IDs
+- Prisma 7.10.0 (stable; 8.0 is RC) with new config model: `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
+- Initial migration `20260909000000_init` generated via `prisma migrate diff` (offline, reproducible via `pnpm db:deploy`); `pnpm exec prisma validate` enforced in CI via `tests/schema.test.ts`

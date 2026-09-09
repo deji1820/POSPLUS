@@ -42,3 +42,18 @@ Format:
 - Credentials strictly from env (`SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` / `SEED_ORG_NAME`, §21); `pnpm db:seed` wired via `prisma.config.ts` migrations.seed
 - Verified end-to-end against the live compose stack: `db:deploy` applied `20260909000000_init`; seed ran and is idempotent (re-run keeps row counts stable)
 - README quickstart updated
+
+## 2026-09-09 — Auth: signup, login, sessions via Auth.js credentials (#3)
+
+- Auth.js v5 (next-auth 5.0.0-beta.32) with Credentials provider, JWT sessions, `/api/auth/[...nextauth]` route, `types/next-auth.d.ts` session augmentation (`user.id`)
+- Passwords: Node `node:crypto` scrypt (`scrypt:salt:hash`) in `lib/auth/password.ts`; the same `hashPassword` is reused by the seed (#8) and the same `verifyScryptPassword` by the login path — one hashing implementation across seed and auth
+- `lib/auth.config.ts`: edge-safe config subset (session/pages only, no providers) consumed by `middleware.ts` — keeps scrypt/`node:crypto` out of the Edge Runtime bundle; `lib/auth/index.ts` adds the Credentials provider for Node runtimes only
+- `middleware.ts`: auth guard — anonymous users redirected to `/login`, logged-in users redirected away from `/login`/`/signup` to `/dashboard`
+- Signup (`/signup` server action, zod-validated): creates Organization + User + Owner `OrganizationMembership` in one transaction, then redirects to `/login?registered=1`
+- Login (`/login` server action + `useActionState` form): deliberately vague "Invalid email or password." per SPEC.md §18; Suspense boundary around `useSearchParams` for static prerender
+- Rate limiting (SPEC.md §18): in-memory fixed-window limiter `lib/auth/rate-limit.ts`, 10 attempts / 5 min per email on login; Redis backing lands with #34
+- `lib/db.ts`: lazy Proxy singleton — Prisma client only instantiated on first use so `next build` page-data collection works without `DATABASE_URL`
+- Tests: `tests/password.test.ts` (4), `tests/rate-limit.test.ts` (4, fake-timer deterministic); full gate green (typecheck / lint / 11 tests / build)
+- Verified end-to-end against the live compose stack (curl through the real Auth.js flow): credentials login → 302 `/dashboard` + session cookie; `/api/auth/session` returns `user.id`; authed `/dashboard` 200; authed `/login` → 307 `/dashboard`; anon `/dashboard` → 307 `/login`; wrong password → 302 `/login?error=CredentialsSignin` (no 500); smoke user cleaned up afterwards
+- Requires `AUTH_SECRET` (SPEC.md §22, already in `.env.example`)
+- No migration (uses #2 schema as-is)

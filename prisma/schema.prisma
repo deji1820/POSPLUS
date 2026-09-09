@@ -38,6 +38,7 @@ enum SyncRunType {
 }
 
 enum SyncRunStatus {
+  QUEUED
   RUNNING
   COMPLETED
   FAILED

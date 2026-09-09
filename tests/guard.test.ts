@@ -150,6 +150,17 @@ describe("withAuth guard (SPEC.md §5/§18/§19)", () => {
     expect(okHandler.mock.calls[0][1]).toMatchObject({ orgId: "org-42", role: "ACCOUNTANT" });
   });
 
+  it("treats a params-less route context as a STATIC route (Next 16 always passes one)", async () => {
+    signIn("OWNER", "org-7");
+    const GET = withAuth({ module: "FINANCE" }, okHandler);
+    // Next 16 invokes every route handler with a context object; only dynamic
+    // routes get `params`. A static handler must receive (req, ctx) — never
+    // (req, undefined, ctx) with ctx left undefined. Regression: ctx arrived
+    // undefined here and handlers blew up on ctx.orgId.
+    await GET(req(), {} as never);
+    expect(okHandler.mock.calls[0][1]).toMatchObject({ orgId: "org-7", role: "OWNER" });
+  });
+
   it("rejects a store outside the caller's scope — cross-org access denied", async () => {
     signIn("STORE_MANAGER");
     mocks.storeAccessFindMany.mockResolvedValue([{ storeId: "s-org1" }]);

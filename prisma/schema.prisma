@@ -279,6 +279,7 @@ model Store {
   receipts                Receipt[]
   shifts                  Shift[]
   storeApplicableAccounts GLAccount[]
+  journalEntries          JournalEntry[]
 
   @@unique([organizationId, loyverseStoreId])
   @@index([organizationId])
@@ -626,6 +627,7 @@ model JournalEntry {
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   fiscalPeriod FiscalPeriod?     @relation(fields: [fiscalPeriodId], references: [id], onDelete: SetNull)
+  store        Store?            @relation(fields: [storeId], references: [id], onDelete: SetNull)
   lines        JournalLine[]
   sourceLink   LedgerSourceLink?
   reversalOf   JournalEntry?     @relation("EntryReversal", fields: [reversalOfId], references: [id])

@@ -1,9 +1,18 @@
 /**
  * Minimal Loyverse API client (official API only — SPEC.md "Do not scrape
- * Loyverse or depend on undocumented endpoints"). This issue (#5) only needs
- * credential validation; full sync/read clients land with #7.
+ * Loyverse or depend on undocumented endpoints"). Credential validation
+ * lives here; the paginated sync read client lives in lib/loyverse/http.ts
+ * and the sync engine in lib/loyverse/sync/ (#7).
  */
 export const LOYVERSE_API_BASE = "https://api.loyverse.com/v1.0";
+
+/**
+ * Base URL for all Loyverse calls. Overridable via LOYVERSE_API_BASE for
+ * integration testing against a stub server (never set in production).
+ */
+export function loyverseApiBase(): string {
+  return process.env.LOYVERSE_API_BASE?.trim() || LOYVERSE_API_BASE;
+}
 
 const VALIDATE_TIMEOUT_MS = 10_000;
 
@@ -22,7 +31,7 @@ export async function validateApiKey(
 ): Promise<ValidateKeyResult> {
   let response: Response;
   try {
-    response = await fetchImpl(`${LOYVERSE_API_BASE}/me`, {
+    response = await fetchImpl(`${loyverseApiBase()}/me`, {
       method: "GET",
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(VALIDATE_TIMEOUT_MS),

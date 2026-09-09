@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TransientJobError } from "@/lib/queue/errors";
 import {
-  defaultSyncEngine,
   processLoyverseSyncJob,
   type SyncEngine,
 } from "@/worker/processors/loyverse-sync";
@@ -32,6 +31,7 @@ const RUN: SyncRun = {
   status: "QUEUED",
   counts: null,
   errorSummary: null,
+  progress: null,
 };
 
 function fakeJob(data: { syncRunId: string; organizationId: string }) {
@@ -59,17 +59,22 @@ describe("processLoyverseSyncJob (SyncRun lifecycle, SPEC.md §9/§19)", () => {
     expect(mocks.syncRunUpdate).not.toHaveBeenCalled();
   });
 
-  it("runs QUEUED → RUNNING → FAILED with a safe summary for the #6 stub engine", async () => {
+  it("runs QUEUED → RUNNING → FAILED with a safe summary for a permanent engine failure", async () => {
     mocks.syncRunFindUnique.mockResolvedValue(RUN);
+    const permanent: SyncEngine = async () => {
+      throw new UnrecoverableError(
+        "Loyverse rejected the stored API key. Reconnect Loyverse in Settings.",
+      );
+    };
     await processLoyverseSyncJob(
       fakeJob({ syncRunId: "run-1", organizationId: "org-1" }),
-      defaultSyncEngine,
+      permanent,
     );
 
     const statuses = mocks.syncRunUpdate.mock.calls.map((c) => c[0].data.status);
     expect(statuses).toEqual(["RUNNING", "FAILED"]);
     const final = mocks.syncRunUpdate.mock.calls.at(-1)![0].data;
-    expect(final.errorSummary).toContain("Sync engine not yet available");
+    expect(final.errorSummary).toContain("rejected the stored API key");
     expect(final.finishedAt).toBeInstanceOf(Date);
     // Permanent (recorded) failure must NOT be rethrown — no pointless retries.
   });

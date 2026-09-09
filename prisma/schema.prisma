@@ -375,6 +375,12 @@ model SyncRun {
   status         SyncRunStatus @default(RUNNING)
   counts         Json?
   errorSummary   String?
+  /**
+   * Resumability checkpoints (SPEC.md §9): which resources are done and the
+   * last Loyverse pagination cursor per in-flight resource, so a retried run
+   * continues where the failed attempt stopped instead of starting over.
+   */
+  progress       Json?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 

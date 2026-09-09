@@ -56,7 +56,7 @@ function deny(error: AuthContextError) {
 export function withAuth(
   options: GuardOptions<void>,
   handler: (req: NextRequest, ctx: SessionContext) => Response | Promise<Response>,
-): (req: NextRequest) => Promise<Response>;
+): (req: NextRequest, routeCtx?: unknown) => Promise<Response>;
 
 /** Dynamic-route overload: handler receives (request, params, ctx). */
 export function withAuth<P>(
@@ -88,7 +88,11 @@ export function withAuth(
         );
       }
 
-      const params = routeCtx ? await routeCtx.params : undefined;
+      // Next 16 always passes a route context object as the second argument,
+      // but only sets `params` on dynamic routes — its absence (not the
+      // context's presence) is the discriminator between the two overloads.
+      const params = routeCtx?.params !== undefined ? await routeCtx.params : undefined;
+
       const storeId = params !== undefined ? options.storeId?.(params) : undefined;
       if (storeId && !canAccessStore(sessionCtx, storeId)) {
         throw new AuthContextError(
@@ -107,7 +111,7 @@ export function withAuth(
       }
 
       // Static routes: (req, ctx). Dynamic routes: (req, params, ctx).
-      if (routeCtx) {
+      if (params !== undefined) {
         return await handler(req, params, sessionCtx);
       }
       return await (

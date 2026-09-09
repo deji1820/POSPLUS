@@ -1,7 +1,7 @@
 /**
  * POST /api/loyverse/sync — SPEC.md §7 (manual / incremental sync request).
- * Authorizes and records a QUEUED sync run; the BullMQ worker that executes
- * it lands with #6/#7. Requires an existing connection (#5).
+ * Authorizes, records a QUEUED sync run, and schedules it on the BullMQ
+ * `loyverse-sync` queue (#6). Requires an existing connection (#5).
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -9,6 +9,7 @@ import { z } from "zod";
 import { apiError, ok } from "@/lib/api/envelope";
 import { withAuth } from "@/lib/auth/guard";
 import { prisma } from "@/lib/db";
+import { enqueueLoyverseSync, QueueUnavailableError } from "@/lib/queue/enqueue";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,26 @@ export const POST = withAuth({ module: "SETTINGS" }, async (req: NextRequest, ct
       startedAt: true,
     },
   });
+
+  try {
+    await enqueueLoyverseSync({ syncRunId: run.id, organizationId: ctx.orgId, type: run.type });
+  } catch (error) {
+    if (error instanceof QueueUnavailableError) {
+      await prisma.syncRun.update({
+        where: { id: run.id },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorSummary: "Could not schedule the sync: job queue unavailable.",
+        },
+      });
+      return NextResponse.json(
+        apiError("QUEUE_UNAVAILABLE", "The background job queue is unavailable. Try again shortly."),
+        { status: 503 },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json(ok({ run }), { status: 202 });
 });

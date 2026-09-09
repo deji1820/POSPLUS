@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/db";
 import { encryptSecret } from "@/lib/encryption";
 import { validateApiKey } from "@/lib/loyverse/client";
+import { enqueueLoyverseSync, QueueUnavailableError } from "@/lib/queue/enqueue";
 
 export class ConnectError extends Error {
   constructor(
@@ -84,7 +85,7 @@ export async function connectLoyverse(
   const envelope = encryptSecret(apiKey);
   const keyVersion = envelope.slice(0, envelope.indexOf(":"));
 
-  const [connection] = await prisma.$transaction([
+  const [connection, run] = await prisma.$transaction([
     prisma.loyverseConnection.upsert({
       where: { organizationId },
       create: {
@@ -107,6 +108,30 @@ export async function connectLoyverse(
       },
     }),
   ]);
+
+  // Schedule the INITIAL sync on the worker (SPEC.md §9). The connection is
+  // already committed, so an unreachable queue must not fail the connect —
+  // record the scheduling failure on the run and tell the operator.
+  try {
+    await enqueueLoyverseSync({ syncRunId: run.id, organizationId, type: "INITIAL" });
+  } catch (error) {
+    if (error instanceof QueueUnavailableError) {
+      await prisma.syncRun.update({
+        where: { id: run.id },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorSummary: "Could not schedule the initial sync: job queue unavailable.",
+        },
+      });
+      throw new ConnectError(
+        503,
+        "QUEUE_UNAVAILABLE",
+        "Connected, but the initial sync could not be scheduled. Use Sync now shortly.",
+      );
+    }
+    throw error;
+  }
 
   return sanitizeConnection(connection);
 }

@@ -2,6 +2,10 @@
 
 Records major-version dependency/upgrade decisions per SPEC.md §3. Day-to-day shipped features are logged in `docs/features.md`.
 
+## 2026-09-09 — Background job infra (issue #6)
+
+- **BullMQ 6.3.4** added (with its `ioredis` transitive dep) per SPEC.md §3 (Redis + BullMQ for async processing) and §10 (queue inventory). v6 is the current stable major; it is the first major of the BullMQ 6 line and requires `maxRetriesPerRequest: null` on blocking connections (handled centrally in `lib/queue/config.ts`). Note: BullMQ 6 made `ioredis` an optional peer — it is installed explicitly and must stay a direct dependency.
+
 ## 2026-09-09 — Initial scaffold (issue #1)
 
 - Next.js 16.3.4 (App Router) + React 19.2.8 + TypeScript 5.9.3, strict mode

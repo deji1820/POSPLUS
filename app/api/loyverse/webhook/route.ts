@@ -19,6 +19,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { apiError, ok } from "@/lib/api/envelope";
+import { apiRoute } from "@/lib/api/handler";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { prisma } from "@/lib/db";
 import { enqueueLoyverseWebhook, QueueUnavailableError } from "@/lib/queue/enqueue";
@@ -51,7 +52,9 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-export async function POST(req: NextRequest) {
+export const POST = apiRoute(handler);
+
+async function handler(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   if (!checkRateLimit(`loyverse-webhook:${ip}`, 60, 60_000)) {
     return NextResponse.json(

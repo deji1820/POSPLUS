@@ -159,7 +159,11 @@ describe("POST /api/finance/journal-entries/:id/reverse", () => {
       { params: Promise.resolve({ id: "je-1" }) },
     );
     expect(res.status).toBe(201);
-    expect(await json(res)).toEqual({ ok: true, data: { reversalEntryId: "je-1-R" } });
+    expect(await json(res)).toEqual({
+      ok: true,
+      data: { reversalEntryId: "je-1-R" },
+      requestId: expect.any(String),
+    });
     expect(mocks.journalEntryCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ reversalOfId: "je-1" }),
     });

@@ -1,6 +1,7 @@
+import { apiRoute } from "@/lib/api/handler";
 import { notImplemented } from "@/lib/api/not-implemented";
 
 export const runtime = "nodejs";
 
-export { notImplemented as GET };
+export const GET = apiRoute(notImplemented);
 export { notImplemented as PATCH };

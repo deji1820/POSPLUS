@@ -8,17 +8,30 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   syncRunCreate: vi.fn(),
   syncRunFindMany: vi.fn(),
+  syncRunUpdate: vi.fn(),
   webhookFindFirst: vi.fn(),
   transaction: vi.fn(),
+  enqueueLoyverseSync: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
     loyverseConnection: { findUnique: mocks.findUnique, upsert: mocks.upsert },
-    syncRun: { create: mocks.syncRunCreate, findMany: mocks.syncRunFindMany },
+    syncRun: {
+      create: mocks.syncRunCreate,
+      findMany: mocks.syncRunFindMany,
+      update: mocks.syncRunUpdate,
+    },
     webhookEvent: { findFirst: mocks.webhookFindFirst },
     $transaction: mocks.transaction,
   },
+}));
+
+// #6: connect schedules the INITIAL sync on BullMQ — keep the queue out of
+// unit tests (Redis is an integration concern, exercised in E2E instead).
+vi.mock("@/lib/queue/enqueue", () => ({
+  enqueueLoyverseSync: mocks.enqueueLoyverseSync,
+  QueueUnavailableError: class QueueUnavailableError extends Error {},
 }));
 
 import { validateApiKey } from "@/lib/loyverse/client";
@@ -149,6 +162,42 @@ describe("connectLoyverse", () => {
     expect(mocks.syncRunCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { organizationId: "org1", type: "INITIAL", status: "QUEUED" },
+      }),
+    );
+  });
+
+  it("schedules the INITIAL sync on the worker queue (#6)", async () => {
+    mockFetch(() => jsonResponse(200, {}));
+    mocks.transaction.mockResolvedValue([
+      storedConnection,
+      { id: "run-1", organizationId: "org1", type: "INITIAL", status: "QUEUED" },
+    ]);
+    await connectLoyverse("org1", "key");
+    expect(mocks.enqueueLoyverseSync).toHaveBeenCalledWith({
+      syncRunId: "run-1",
+      organizationId: "org1",
+      type: "INITIAL",
+    });
+  });
+
+  it("keeps the connection but reports QUEUE_UNAVAILABLE when scheduling fails", async () => {
+    mockFetch(() => jsonResponse(200, {}));
+    mocks.transaction.mockResolvedValue([
+      storedConnection,
+      { id: "run-1", organizationId: "org1", type: "INITIAL", status: "QUEUED" },
+    ]);
+    const { QueueUnavailableError } = await import("@/lib/queue/enqueue");
+    mocks.enqueueLoyverseSync.mockRejectedValueOnce(new QueueUnavailableError());
+
+    const failure = await connectLoyverse("org1", "key").catch((e) => e);
+    expect(failure).toBeInstanceOf(ConnectError);
+    expect(failure.status).toBe(503);
+    expect(failure.code).toBe("QUEUE_UNAVAILABLE");
+    // The unschedulable run is marked FAILED with a safe summary, not left QUEUED forever.
+    expect(mocks.syncRunUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "run-1" },
+        data: expect.objectContaining({ status: "FAILED" }),
       }),
     );
   });

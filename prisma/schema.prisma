@@ -341,6 +341,7 @@ model LoyverseConnection {
   encryptedApiKey String
   keyVersion      String
   status          String    @default("connected")
+  merchantId      String? // Loyverse business id from GET /me; routes webhooks to the org (#9)
   lastSyncAt      DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

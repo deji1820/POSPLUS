@@ -76,6 +76,16 @@ describe("validateApiKey", () => {
     await expect(validateApiKey("good-key")).resolves.toEqual({
       ok: true,
       businessName: "Test Business",
+      merchantId: null,
+    });
+  });
+
+  it("captures the merchant id when Loyverse returns one", async () => {
+    mockFetch(() => jsonResponse(200, { name: "Test Business", id: "merchant-123" }));
+    await expect(validateApiKey("good-key")).resolves.toEqual({
+      ok: true,
+      businessName: "Test Business",
+      merchantId: "merchant-123",
     });
   });
 

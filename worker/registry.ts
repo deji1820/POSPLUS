@@ -1,21 +1,23 @@
 /**
  * Job-name → processor registry (SPEC.md §10).
  *
- * Only `initial-loyverse-sync` / `incremental-loyverse-sync` have real
- * processors in #6; every other SPEC §10 job type routes to a permanent
- * not-implemented stub that dead-letters immediately with an operator-safe
- * reason recorded in the failed set (§19). Domain issues register their
- * processors here as they land.
+ * `initial-loyverse-sync` / `incremental-loyverse-sync` (#6/#7) and
+ * `process-loyverse-webhook` (#9) have real processors; every other SPEC §10
+ * job type routes to a permanent not-implemented stub that dead-letters
+ * immediately with an operator-safe reason recorded in the failed set (§19).
+ * Domain issues register their processors here as they land.
  */
 import { UnrecoverableError, type Job } from "bullmq";
 
 import { processLoyverseSyncJob } from "@/worker/processors/loyverse-sync";
+import { processLoyverseWebhookJob } from "@/worker/processors/loyverse-webhook";
 
 export type Processor = (job: Job) => Promise<unknown>;
 
 const registry = new Map<string, Processor>([
   ["initial-loyverse-sync", processLoyverseSyncJob as Processor],
   ["incremental-loyverse-sync", processLoyverseSyncJob as Processor],
+  ["process-loyverse-webhook", processLoyverseWebhookJob as Processor],
 ]);
 
 export function registerProcessor(jobName: string, processor: Processor): void {

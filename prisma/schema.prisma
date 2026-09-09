@@ -720,6 +720,7 @@ model LedgerSourceLink {
   organizationId    String
   storeId           String?
   loyverseReceiptId String?
+  loyverseRefundId  String?
   paymentType       String?
   sourceTotal       Decimal? @db.Decimal(14, 2)
   postedAt          DateTime @default(now())
@@ -727,6 +728,7 @@ model LedgerSourceLink {
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, loyverseReceiptId])
+  @@index([organizationId, loyverseRefundId])
 }
 
 // ---------------------------------------------------------------------------

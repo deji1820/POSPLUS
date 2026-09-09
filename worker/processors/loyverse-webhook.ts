@@ -9,7 +9,13 @@
  *      into the wrong tenant).
  *   2. dispatch — single-record idempotent upserts via the shared records
  *      mapping (lib/loyverse/webhook/handlers.ts).
- *   3. audit — one AuditLog row per event with sanitized metadata only
+ *   3. side effects — receipts/refunds enqueue finance-posting jobs (#11,
+ *      SPEC.md §9 "update the local read model and enqueue finance posting").
+ *      This runs AFTER the event is marked PROCESSED and outside the dispatch
+ *      catch: a queue blip rethrows for a BullMQ retry (the redispatch is
+ *      idempotent and the deterministic jobIds dedupe re-enqueues) instead of
+ *      flipping an already-processed event to FAILED.
+ *   4. audit — one AuditLog row per event with sanitized metadata only
  *      (event id/type, counts, note) — never the payload (§24).
  *
  * Error taxonomy (§19): expected permanent conditions (event vanished,
@@ -21,7 +27,11 @@ import type { Job } from "bullmq";
 
 import { prisma } from "@/lib/db";
 import { dispatchWebhookEvent } from "@/lib/loyverse/webhook/handlers";
-import type { LoyverseWebhookJobData } from "@/lib/queue/enqueue";
+import {
+  enqueueReceiptPosting,
+  enqueueRefundPosting,
+  type LoyverseWebhookJobData,
+} from "@/lib/queue/enqueue";
 import {
   isTransient,
   safeJobErrorMessage,
@@ -71,6 +81,7 @@ export async function processLoyverseWebhookJob(
       },
     });
 
+  let postingTargets: { receiptIds: string[]; refundIds: string[] } | null = null;
   try {
     const result = await dispatchWebhookEvent({ organizationId, eventType, payload });
     if (result.status === "IGNORED") {
@@ -99,6 +110,7 @@ export async function processLoyverseWebhookJob(
       records: result.records,
       refunds: result.refunds,
     });
+    postingTargets = { receiptIds: result.receiptIds, refundIds: result.refundIds };
   } catch (error) {
     const safe = safeJobErrorMessage(error);
     await mark("FAILED", safe);
@@ -110,5 +122,29 @@ export async function processLoyverseWebhookJob(
     });
     if (isTransient(error)) throw error;
     throw new UnrecoverableError(safe);
+  }
+
+  // §9 side effect: schedule ledger posting for the receipts/refunds this
+  // event wrote. Deliberately OUTSIDE the catch above: a queue blip rethrows
+  // for a BullMQ retry (the redispatch is idempotent and the deterministic
+  // jobIds dedupe the re-enqueue) instead of flipping an already-PROCESSED
+  // event to FAILED.
+  if (postingTargets) {
+    for (const receiptId of postingTargets.receiptIds) {
+      await enqueueReceiptPosting({ receiptId, organizationId: event.organizationId });
+    }
+    for (const refundId of postingTargets.refundIds) {
+      await enqueueRefundPosting({ refundId, organizationId: event.organizationId });
+    }
+    if (
+      postingTargets.receiptIds.length > 0 ||
+      postingTargets.refundIds.length > 0
+    ) {
+      jobLog(job.id ?? webhookEventId, "finance posting scheduled", {
+        eventId: event.id,
+        receipts: postingTargets.receiptIds.length,
+        refunds: postingTargets.refundIds.length,
+      });
+    }
   }
 }

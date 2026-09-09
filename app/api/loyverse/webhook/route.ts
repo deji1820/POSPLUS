@@ -117,8 +117,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3 — attribute the event to an organization.
-  const organizationId = await resolveWebhookOrganization(parsed.data);
+  // 3 — attribute the event to an organization. Attribute from the FULL
+  // parsed payload, not zod's stripped envelope: store attribution needs the
+  // store_id fields the envelope schema does not retain. The body is signature
+  // verified at this point, and store/merchant ids are matched against OUR
+  // synced rows — a bogus id simply matches nothing (§18).
+  const organizationId = await resolveWebhookOrganization(payload as Record<string, unknown>);
   if (!organizationId) {
     // Not a business we serve: ack so Loyverse does not retry forever, drop
     // (no org to attach the immutable event to). Sanitized log only (§24).

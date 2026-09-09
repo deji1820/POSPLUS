@@ -2,6 +2,10 @@
  * process-loyverse-webhook (SPEC.md §9 webhook flow, §19 error taxonomy,
  * §24 logging/audit hygiene). Owns WebhookEvent RECEIVED →
  * PROCESSED/IGNORED/FAILED plus one sanitized AuditLog row per event.
+ *
+ * #11: receipts/refunds seen by an event enqueue finance-posting jobs AFTER
+ * the event is marked PROCESSED — a queue blip must retry the job without
+ * flipping the processed event to FAILED.
  */
 import type { WebhookEvent } from "@prisma/client";
 import { UnrecoverableError } from "bullmq";
@@ -28,6 +32,16 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/loyverse/webhook/handlers", () => ({
   dispatchWebhookEvent: vi.fn(),
+}));
+
+const enqueue = vi.hoisted(() => ({
+  receipt: vi.fn(),
+  refund: vi.fn(),
+}));
+
+vi.mock("@/lib/queue/enqueue", () => ({
+  enqueueReceiptPosting: enqueue.receipt,
+  enqueueRefundPosting: enqueue.refund,
 }));
 
 const EVENT: WebhookEvent = {
@@ -58,6 +72,8 @@ const JOB_DATA = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  enqueue.receipt.mockResolvedValue(undefined);
+  enqueue.refund.mockResolvedValue(undefined);
   mocks.webhookEventFindUnique.mockResolvedValue(EVENT);
 });
 
@@ -93,6 +109,8 @@ describe("processLoyverseWebhookJob — state machine + audit", () => {
       resource: "customers",
       records: 1,
       refunds: 0,
+      receiptIds: [],
+      refundIds: [],
     });
     await processLoyverseWebhookJob(fakeJob(JOB_DATA));
 
@@ -131,6 +149,8 @@ describe("processLoyverseWebhookJob — state machine + audit", () => {
       resource: "inventory_levels",
       records: 0,
       refunds: 0,
+      receiptIds: [],
+      refundIds: [],
       note: "inventory projection deferred to the inventory issues",
     });
     await processLoyverseWebhookJob(fakeJob(JOB_DATA));
@@ -177,6 +197,66 @@ describe("processLoyverseWebhookJob — state machine + audit", () => {
   });
 });
 
+describe("processLoyverseWebhookJob — finance-posting enqueue (#11)", () => {
+  it("enqueues posting jobs for the receipts and refunds the event wrote", async () => {
+    vi.mocked(dispatchWebhookEvent).mockResolvedValue({
+      status: "PROCESSED",
+      resource: "receipts",
+      records: 2,
+      refunds: 1,
+      receiptIds: ["rec-1", "rec-2"],
+      refundIds: ["ref-1"],
+    });
+    await processLoyverseWebhookJob(fakeJob(JOB_DATA));
+
+    expect(enqueue.receipt).toHaveBeenCalledTimes(2);
+    expect(enqueue.receipt).toHaveBeenCalledWith({ receiptId: "rec-1", organizationId: "org-1" });
+    expect(enqueue.receipt).toHaveBeenCalledWith({ receiptId: "rec-2", organizationId: "org-1" });
+    expect(enqueue.refund).toHaveBeenCalledTimes(1);
+    expect(enqueue.refund).toHaveBeenCalledWith({ refundId: "ref-1", organizationId: "org-1" });
+    // The event was already marked PROCESSED before the enqueue ran.
+    expect(mocks.webhookEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PROCESSED" }) }),
+    );
+  });
+
+  it("enqueues nothing for non-receipt resources", async () => {
+    vi.mocked(dispatchWebhookEvent).mockResolvedValue({
+      status: "PROCESSED",
+      resource: "customers",
+      records: 1,
+      refunds: 0,
+      receiptIds: [],
+      refundIds: [],
+    });
+    await processLoyverseWebhookJob(fakeJob(JOB_DATA));
+    expect(enqueue.receipt).not.toHaveBeenCalled();
+    expect(enqueue.refund).not.toHaveBeenCalled();
+  });
+
+  it("an enqueue failure rejects for a BullMQ retry but leaves the event PROCESSED", async () => {
+    vi.mocked(dispatchWebhookEvent).mockResolvedValue({
+      status: "PROCESSED",
+      resource: "receipts",
+      records: 1,
+      refunds: 0,
+      receiptIds: ["rec-1"],
+      refundIds: [],
+    });
+    enqueue.receipt.mockRejectedValue(new Error("redis down"));
+
+    await expect(processLoyverseWebhookJob(fakeJob(JOB_DATA))).rejects.toThrow("redis down");
+    expect(mocks.webhookEventUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.webhookEventUpdate.mock.calls[0][0].data.status).toBe("PROCESSED");
+    expect(mocks.webhookEventUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }),
+    );
+    // ...and no FAILED audit row either.
+    const actions = mocks.auditLogCreate.mock.calls.map((c) => c[0].data.action);
+    expect(actions).not.toContain("webhook.failed");
+  });
+});
+
 describe("processLoyverseWebhookJob — §24 hygiene", () => {
   it("the audit row never contains the payload", async () => {
     vi.mocked(dispatchWebhookEvent).mockResolvedValue({
@@ -184,6 +264,8 @@ describe("processLoyverseWebhookJob — §24 hygiene", () => {
       resource: "customers",
       records: 1,
       refunds: 0,
+      receiptIds: [],
+      refundIds: [],
     });
     await processLoyverseWebhookJob(fakeJob(JOB_DATA));
     const audit = JSON.stringify(mocks.auditLogCreate.mock.calls[0][0].data.metadataJson);

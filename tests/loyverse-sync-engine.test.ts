@@ -44,6 +44,20 @@ vi.mock("@/lib/loyverse/http", () => ({
   defaultSleep: async () => {},
 }));
 
+// #11: the engine enqueues finance-posting jobs at step 11. Mock the handoff
+// (a real enqueue would open Redis) and export a real QueueUnavailableError
+// class so the engine's `instanceof` guard keeps working.
+const enqueueMocks = vi.hoisted(() => ({
+  receipt: vi.fn(),
+  refund: vi.fn(),
+}));
+
+vi.mock("@/lib/queue/enqueue", () => ({
+  enqueueReceiptPosting: enqueueMocks.receipt,
+  enqueueRefundPosting: enqueueMocks.refund,
+  QueueUnavailableError: class QueueUnavailableError extends Error {},
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     loyverseConnection: {
@@ -230,6 +244,11 @@ beforeEach(() => {
   mocks.customerFindUnique.mockImplementation(byLoyverseId);
   mocks.itemUpsert.mockResolvedValue({ id: "local-item" });
   mocks.receiptUpsert.mockResolvedValue({ id: "local-receipt" });
+  mocks.refundUpsert.mockResolvedValue({ id: "local-refund" });
+  // #11: finance-posting enqueue defaults (a cleared mock returns undefined,
+  // which the awaiting engine treats as a resolved no-op).
+  enqueueMocks.receipt.mockResolvedValue(undefined);
+  enqueueMocks.refund.mockResolvedValue(undefined);
   // Step-11 baseline COA hook (#10): accounts upsert, default payment
   // mappings created only when unmapped.
   mocks.gLAccountUpsert.mockResolvedValue({ id: "acct" });
@@ -262,6 +281,31 @@ describe("runLoyverseSync (SPEC.md §9 ordered sequence)", () => {
         data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
       }),
     );
+  });
+
+  it("schedules finance postings for every receipt/refund seen at step 11 (#11)", async () => {
+    await runLoyverseSync(run);
+    // The stub dataset carries 3 receipts; r1 rides one refund along.
+    expect(enqueueMocks.receipt).toHaveBeenCalledTimes(3);
+    expect(enqueueMocks.receipt).toHaveBeenCalledWith({
+      receiptId: "local-receipt",
+      organizationId: "org-1",
+    });
+    expect(enqueueMocks.refund).toHaveBeenCalledTimes(1);
+    expect(enqueueMocks.refund).toHaveBeenCalledWith({
+      refundId: "local-refund",
+      organizationId: "org-1",
+    });
+  });
+
+  it("fails the run transiently when the queue is unavailable at step 11 (#11)", async () => {
+    const { QueueUnavailableError } = await import("@/lib/queue/enqueue");
+    enqueueMocks.receipt.mockRejectedValue(new QueueUnavailableError());
+
+    await expect(runLoyverseSync(run)).rejects.toBeInstanceOf(TransientJobError);
+    // The run failed AFTER the connection was stamped — a BullMQ retry resumes
+    // at step 11 and the deterministic jobIds dedupe the re-enqueue.
+    expect(mocks.loyverseConnectionUpdate).toHaveBeenCalled();
   });
 
   it("runs the step-11 post-sync checklist: baseline accounts upserted, only unmapped payment types get default mappings", async () => {

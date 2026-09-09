@@ -10,8 +10,11 @@
  * Deferred side effects (documented follow-ups, recorded in the audit note):
  * - `inventory_levels.*` — needs the store→warehouse mapping + inventory
  *   projection from the inventory issues; IGNORED until then.
- * - receipt/refund → finance-posting enqueue — lands with #10/#11.
  * - reorder / analytics triggers — land with the inventory issues.
+ *
+ * Receipt/refund finance-posting enqueue (#11) is NOT deferred: the dispatch
+ * result carries the local receipt/refund ids and the webhook processor
+ * enqueues `post-*-to-ledger` jobs after the event is marked PROCESSED.
  */
 import { UnrecoverableError } from "@/lib/queue/errors";
 import {
@@ -35,6 +38,10 @@ export interface WebhookDispatchResult {
   records: number;
   /** Refunds written when resource === "receipts". */
   refunds: number;
+  /** Local receipt ids to post to the ledger (finance-posting enqueue, #11). */
+  receiptIds: string[];
+  /** Local refund ids to post as reversals (#11). */
+  refundIds: string[];
   /** Why the event was ignored — surfaced in the audit note. */
   note?: string;
 }
@@ -108,6 +115,8 @@ export async function dispatchWebhookEvent(input: {
       resource,
       records: 0,
       refunds: 0,
+      receiptIds: [],
+      refundIds: [],
       note: `${resource} projection deferred to the inventory issues; event recorded but not applied.`,
     };
   }
@@ -116,6 +125,8 @@ export async function dispatchWebhookEvent(input: {
     const records = resourceRecords(payload, "receipts");
     let written = 0;
     let refunds = 0;
+    const receiptIds: string[] = [];
+    const refundIds: string[] = [];
     for (const record of records) {
       const result = await upsertReceiptRecord(organizationId, record);
       if (!result.ok) {
@@ -128,8 +139,10 @@ export async function dispatchWebhookEvent(input: {
       }
       written += 1;
       refunds += result.refunds;
+      receiptIds.push(result.receiptId);
+      refundIds.push(...result.refundIds);
     }
-    return { status: "PROCESSED", resource, records: written, refunds };
+    return { status: "PROCESSED", resource, records: written, refunds, receiptIds, refundIds };
   }
 
   const handler = RESOURCE_HANDLERS[resource];
@@ -139,6 +152,8 @@ export async function dispatchWebhookEvent(input: {
       resource: resource || "unknown",
       records: 0,
       refunds: 0,
+      receiptIds: [],
+      refundIds: [],
       note: `Unsupported webhook type "${eventType}".`,
     };
   }
@@ -148,5 +163,5 @@ export async function dispatchWebhookEvent(input: {
   for (const record of records) {
     written += await handler(organizationId, record);
   }
-  return { status: "PROCESSED", resource, records: written, refunds: 0 };
+  return { status: "PROCESSED", resource, records: written, refunds: 0, receiptIds: [], refundIds: [] };
 }

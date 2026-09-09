@@ -147,6 +147,22 @@ describe("POST /api/loyverse/webhook — signature verification (§18)", () => {
     });
   });
 
+  it("attributes from the FULL payload — store_id survives the envelope schema strip", async () => {
+    // Regression (#11 E2E): zod's parsed.data only keeps envelope fields, so
+    // attributing from it silently dropped store-based routing whenever no
+    // LoyverseConnection merchant match existed.
+    await POST(
+      webhookRequest(RECEIPT_BODY, { "x-loyverse-signature": sign(RECEIPT_BODY) }),
+    );
+    const attributed = vi.mocked(resolveWebhookOrganization).mock.calls[0][0];
+    expect(attributed.merchant_id).toBe("merchant-1");
+    // store_id lives ONLY inside the receipt records — it survives only if the
+    // full payload (not zod's stripped envelope) reaches the resolver.
+    expect(attributed.receipts).toEqual([
+      expect.objectContaining({ id: "rcpt-1", store_id: "store-1" }),
+    ]);
+  });
+
   it("rejects an invalid signature with 401 before storing anything", async () => {
     const res = await POST(
       webhookRequest(RECEIPT_BODY, { "x-loyverse-signature": "deadbeef".repeat(5) }),

@@ -90,6 +90,15 @@ describe("processor registry", () => {
     expect(resolveProcessor("process-loyverse-webhook")).toBe(processLoyverseWebhookJob);
   });
 
+  it("resolves the real processors for the finance-posting jobs (#11)", async () => {
+    const {
+      processPostReceiptToLedgerJob,
+      processPostRefundToLedgerJob,
+    } = await import("@/worker/processors/finance-posting");
+    expect(resolveProcessor("post-receipt-to-ledger")).toBe(processPostReceiptToLedgerJob);
+    expect(resolveProcessor("post-refund-to-ledger")).toBe(processPostRefundToLedgerJob);
+  });
+
   it("routes unimplemented job names to a permanent dead-letter stub", async () => {
     const stub = resolveProcessor("calculate-payroll");
     const { UnrecoverableError } = await import("bullmq");

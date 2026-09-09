@@ -29,6 +29,16 @@ export interface LoyverseWebhookJobData {
   payload: Record<string, unknown>;
 }
 
+export interface PostReceiptJobData {
+  receiptId: string;
+  organizationId: string;
+}
+
+export interface PostRefundJobData {
+  refundId: string;
+  organizationId: string;
+}
+
 function jobNameForRun(type: string): JobName {
   return type === "INITIAL" ? "initial-loyverse-sync" : "incremental-loyverse-sync";
 }
@@ -82,6 +92,39 @@ export async function enqueueLoyverseWebhook(input: {
         payload: input.payload,
       } satisfies LoyverseWebhookJobData,
       { jobId: `webhook-${input.webhookEventId}` },
+    );
+  } catch (error) {
+    throw new QueueUnavailableError({ cause: error });
+  }
+}
+
+/**
+ * Enqueue a receipt → ledger posting (SPEC.md §11, #11). `jobId` derives from
+ * the local receipt id so a retried enqueue (webhook redelivery, sync resume)
+ * cannot schedule the same posting twice — the posting itself is idempotent
+ * too (partial unique index on the source link).
+ */
+export async function enqueueReceiptPosting(input: PostReceiptJobData): Promise<void> {
+  const queue = getQueue(JOB_QUEUES["post-receipt-to-ledger"]);
+  try {
+    await queue.add(
+      "post-receipt-to-ledger",
+      input satisfies PostReceiptJobData,
+      { jobId: `post-receipt-${input.receiptId}` },
+    );
+  } catch (error) {
+    throw new QueueUnavailableError({ cause: error });
+  }
+}
+
+/** Enqueue a refund → ledger reversal posting (SPEC.md §11, #11). */
+export async function enqueueRefundPosting(input: PostRefundJobData): Promise<void> {
+  const queue = getQueue(JOB_QUEUES["post-refund-to-ledger"]);
+  try {
+    await queue.add(
+      "post-refund-to-ledger",
+      input satisfies PostRefundJobData,
+      { jobId: `post-refund-${input.refundId}` },
     );
   } catch (error) {
     throw new QueueUnavailableError({ cause: error });

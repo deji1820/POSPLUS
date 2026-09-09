@@ -16,6 +16,9 @@
  */
 import type { SyncRun } from "@prisma/client";
 
+import { prisma } from "@/lib/db";
+import { decryptSecret } from "@/lib/encryption";
+import { ensureBaselineCoa } from "@/lib/finance/baseline";
 import { validateApiKey } from "@/lib/loyverse/client";
 import { LoyverseHttp, type Sleep } from "@/lib/loyverse/http";
 import {
@@ -28,9 +31,11 @@ import {
   upsertReceiptRecord,
   upsertStoreRecord,
 } from "@/lib/loyverse/records";
-import { prisma } from "@/lib/db";
-import { decryptSecret } from "@/lib/encryption";
-import { ensureBaselineCoa } from "@/lib/finance/baseline";
+import {
+  enqueueReceiptPosting,
+  enqueueRefundPosting,
+  QueueUnavailableError,
+} from "@/lib/queue/enqueue";
 import { TransientJobError, UnrecoverableError } from "@/lib/queue/errors";
 import { jobLog } from "@/worker/log";
 
@@ -128,6 +133,10 @@ export async function runLoyverseSync(
   const progress = parseProgress(run.progress);
   const counts = parseCounts(run.counts);
   const jobId = `sync-${run.id}`;
+  // Receipts/refunds seen during the run — step 11 schedules their ledger
+  // postings. Collected across resume attempts; deterministic jobIds make a
+  // re-enqueue after a retry harmless.
+  const posting = { receiptIds: [] as string[], refundIds: [] as string[] };
 
   for (const resource of RESOURCE_ORDER) {
     // Resume: skip resources a previous attempt fully persisted. Delta runs
@@ -138,7 +147,7 @@ export async function runLoyverseSync(
     const process = RESOURCE_PROCESSORS[resource];
     // Per-page count merging happens inside forEachPage so a mid-resource
     // checkpoint carries cumulative counts; the processor itself returns void.
-    await process(ctx(http, run.id, orgId, since, jobId, resource, progress, counts));
+    await process(ctx(http, run.id, orgId, since, jobId, resource, progress, counts, posting));
     if (fullRun) {
       progress.done.push(resource);
       delete progress.cursors[resource];
@@ -155,10 +164,34 @@ export async function runLoyverseSync(
   });
 
   // Step 11 — post-sync setup checklist: baseline chart of accounts + default
-  // GL mappings (#10) so the next issue's auto-posting has accounts to post
-  // into. Idempotent — existing accounts/mappings are never overwritten.
+  // GL mappings (#10) so auto-posting has accounts to post into, then schedule
+  // ledger postings for every receipt/refund seen (#11). Both idempotent —
+  // existing accounts/mappings are never overwritten and posting jobIds are
+  // deterministic.
   const baseline = await ensureBaselineCoa(orgId);
-  jobLog(jobId, "sync complete", { counts, baselineAccounts: baseline.accounts });
+  let scheduled = 0;
+  try {
+    for (const receiptId of posting.receiptIds) {
+      await enqueueReceiptPosting({ receiptId, organizationId: orgId });
+      scheduled += 1;
+    }
+    for (const refundId of posting.refundIds) {
+      await enqueueRefundPosting({ refundId, organizationId: orgId });
+      scheduled += 1;
+    }
+  } catch (error) {
+    if (error instanceof QueueUnavailableError) {
+      throw new TransientJobError(
+        "The job queue is unavailable; finance postings will be scheduled when the sync is retried.",
+      );
+        }
+    throw error;
+  }
+  jobLog(jobId, "sync complete", {
+    counts,
+    baselineAccounts: baseline.accounts,
+    financePostingsScheduled: scheduled,
+  });
   return { counts };
 }
 
@@ -175,6 +208,7 @@ interface ResourceContext {
   resource: ResourceName;
   progress: SyncProgress;
   counts: Record<string, number>;
+  posting: { receiptIds: string[]; refundIds: string[] };
 }
 
 function ctx(
@@ -186,8 +220,9 @@ function ctx(
   resource: ResourceName,
   progress: SyncProgress,
   counts: Record<string, number>,
+  posting: { receiptIds: string[]; refundIds: string[] },
 ): ResourceContext {
-  return { http, runId, orgId, since, jobId, resource, progress, counts };
+  return { http, runId, orgId, since, jobId, resource, progress, counts, posting };
 }
 
 interface ResourceResult {
@@ -351,6 +386,8 @@ async function syncReceipts(c: ResourceContext): Promise<void> {
         }
         upserted += 1;
         pageRefunds += result.refunds;
+        c.posting.receiptIds.push(result.receiptId);
+        c.posting.refundIds.push(...result.refundIds);
       }
       return { main: upserted, extra: { refunds: pageRefunds } };
     },

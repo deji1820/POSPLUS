@@ -253,7 +253,14 @@ export async function upsertCustomerRecord(
 // ---------------------------------------------------------------------------
 
 export type ReceiptUpsertResult =
-  | { ok: true; refunds: number }
+  | {
+      ok: true;
+      /** Local receipt id — finance-posting jobs key off it (#11). */
+      receiptId: string;
+      refunds: number;
+      /** Local refund ids riding on this receipt payload. */
+      refundIds: string[];
+    }
   | { ok: false; reason: "missing-id" | "unknown-store" };
 
 async function resolveVariantId(
@@ -356,6 +363,7 @@ export async function upsertReceiptRecord(
 
   // Refunds ride along on the receipt payload.
   let refunds = 0;
+  const refundIds: string[] = [];
   const receiptRefunds = Array.isArray(receipt.refunds) ? receipt.refunds : [];
   for (const refund of receiptRefunds as Record<string, unknown>[]) {
     const refundLoyverseId = asString(refund.id);
@@ -372,7 +380,7 @@ export async function upsertReceiptRecord(
         total: money(line.total_money ?? line.total),
       });
     }
-    await prisma.refund.upsert({
+    const localRefund = await prisma.refund.upsert({
       where: {
         organizationId_loyverseId: { organizationId: orgId, loyverseId: refundLoyverseId },
       },
@@ -390,6 +398,7 @@ export async function upsertReceiptRecord(
       },
     });
     refunds += 1;
+    refundIds.push(localRefund.id);
   }
-  return { ok: true, refunds };
+  return { ok: true, receiptId: local.id, refunds, refundIds };
 }

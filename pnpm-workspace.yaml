@@ -1,0 +1,6 @@
+# pnpm 11 reads settings from this file (SPEC.md §3 dependency policy).
+# unrs-resolver (TS import resolver via eslint-config-next) must run its
+# native build script; pnpm 11's supply-chain policy otherwise hard-fails
+# install with ERR_PNPM_IGNORED_BUILDS.
+allowBuilds:
+  unrs-resolver: true

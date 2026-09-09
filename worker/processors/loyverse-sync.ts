@@ -2,15 +2,16 @@
  * SyncRun lifecycle processor for the `loyverse-sync` queue (SPEC.md §9).
  *
  * Owns the QUEUED → RUNNING → COMPLETED/FAILED state machine on SyncRun so
- * the web layer only ever records QUEUED runs and enqueues. The actual sync
- * engine is injectable: #6 ships a permanent "not available yet" stub that
- * records a safe FAILED summary on the run (#7 replaces it with the real
- * initial/incremental implementation), while transient engine errors are
- * recorded on the run AND rethrown so BullMQ retries with backoff (§19).
+ * the web layer only ever records QUEUED runs and enqueues. The sync engine
+ * (#7, lib/loyverse/sync/engine.ts) is injectable for tests; the default runs
+ * the real ordered, resumable Loyverse sync. Transient engine errors are
+ * recorded on the run AND rethrown so BullMQ retries with backoff (§19) and
+ * the retried job resumes from the persisted checkpoint.
  */
 import type { SyncRun } from "@prisma/client";
 import type { Job } from "bullmq";
 
+import { runLoyverseSync } from "@/lib/loyverse/sync/engine";
 import { prisma } from "@/lib/db";
 import {
   isTransient,
@@ -25,17 +26,7 @@ export interface SyncEngineResult {
 
 export type SyncEngine = (run: SyncRun) => Promise<SyncEngineResult>;
 
-/** Permanent stub until #7 lands the real sync implementation. */
-export class SyncEngineUnavailableError extends UnrecoverableError {
-  constructor() {
-    super("Sync engine not yet available (initial sync lands with #7).");
-    this.name = "SyncEngineUnavailableError";
-  }
-}
-
-export const defaultSyncEngine: SyncEngine = async () => {
-  throw new SyncEngineUnavailableError();
-};
+export const defaultSyncEngine: SyncEngine = (run) => runLoyverseSync(run);
 
 export async function processLoyverseSyncJob(
   job: Job<LoyverseSyncJobData>,
@@ -80,8 +71,8 @@ export async function processLoyverseSyncJob(
         errorSummary: safeJobErrorMessage(error),
       },
     });
-    // Permanent failures (incl. the #7 stub) are fully recorded above — the
-    // job itself completes so real syncs don't dead-letter by default.
+    // Permanent failures are fully recorded above — the job itself completes
+    // so operator-correctable failures don't dead-letter by default.
     if (isTransient(error)) throw error;
   }
 }

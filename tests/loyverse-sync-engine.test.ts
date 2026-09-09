@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
   customerFindUnique: vi.fn(),
   receiptUpsert: vi.fn(),
   refundUpsert: vi.fn(),
+  // Step-11 baseline COA hook (#10)
+  gLAccountUpsert: vi.fn(),
+  gLAccountFindUnique: vi.fn(),
+  gLMappingFindMany: vi.fn(),
+  gLMappingCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/loyverse/client", () => ({
@@ -58,6 +63,8 @@ vi.mock("@/lib/db", () => ({
     customer: { upsert: mocks.customerUpsert, findUnique: mocks.customerFindUnique },
     receipt: { upsert: mocks.receiptUpsert },
     refund: { upsert: mocks.refundUpsert },
+    gLAccount: { upsert: mocks.gLAccountUpsert, findUnique: mocks.gLAccountFindUnique },
+    gLMapping: { findMany: mocks.gLMappingFindMany, create: mocks.gLMappingCreate },
   },
 }));
 
@@ -223,6 +230,16 @@ beforeEach(() => {
   mocks.customerFindUnique.mockImplementation(byLoyverseId);
   mocks.itemUpsert.mockResolvedValue({ id: "local-item" });
   mocks.receiptUpsert.mockResolvedValue({ id: "local-receipt" });
+  // Step-11 baseline COA hook (#10): accounts upsert, default payment
+  // mappings created only when unmapped.
+  mocks.gLAccountUpsert.mockResolvedValue({ id: "acct" });
+  mocks.gLAccountFindUnique.mockImplementation(
+    (args: { where: { organizationId_code: { code: string } } }) => ({
+      id: `local-${args.where.organizationId_code.code}`,
+    }),
+  );
+  mocks.gLMappingFindMany.mockResolvedValue([]);
+  mocks.gLMappingCreate.mockResolvedValue({ id: "map" });
 });
 
 describe("runLoyverseSync (SPEC.md §9 ordered sequence)", () => {
@@ -245,6 +262,26 @@ describe("runLoyverseSync (SPEC.md §9 ordered sequence)", () => {
         data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
       }),
     );
+  });
+
+  it("runs the step-11 post-sync checklist: baseline accounts upserted, only unmapped payment types get default mappings", async () => {
+    await runLoyverseSync(run);
+    expect(mocks.gLAccountUpsert).toHaveBeenCalledTimes(12); // BASELINE_COA
+    // No payment mappings existed → Cash + Card defaults created.
+    expect(mocks.gLMappingCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.gLMappingCreate.mock.calls[0][0].data).toEqual(
+      expect.objectContaining({ paymentType: "Cash", accountId: "local-1000" }),
+    );
+    expect(mocks.gLMappingCreate.mock.calls[1][0].data).toEqual(
+      expect.objectContaining({ paymentType: "Card", accountId: "local-1010" }),
+    );
+
+    vi.clearAllMocks();
+    mocks.gLMappingFindMany.mockResolvedValue([{ paymentType: "Cash" }, { paymentType: "Card" }]);
+    await runLoyverseSync(run);
+    // Both defaults already mapped → no new mappings, accounts still ensured.
+    expect(mocks.gLMappingCreate).not.toHaveBeenCalled();
+    expect(mocks.gLAccountUpsert).toHaveBeenCalledTimes(12);
   });
 
   it("scopes every upsert to the organization + Loyverse id", async () => {

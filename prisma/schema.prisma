@@ -404,6 +404,7 @@ model Category {
   parent       Category?    @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
   children     Category[]   @relation("CategoryChildren")
   items        Item[]
+  mappings     GLMapping[]
 
   @@unique([organizationId, loyverseId])
   @@index([organizationId])
@@ -605,6 +606,7 @@ model GLMapping {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   account      GLAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category     Category?    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
 }

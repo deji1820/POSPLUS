@@ -16,9 +16,10 @@
  * logins with the same `verifyScryptPassword` helper.
  */
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, Role, GLAccountType } from "@prisma/client";
+import { PrismaClient, Role } from "@prisma/client";
 
 import { hashPassword } from "../lib/auth/password";
+import { ensureBaselineCoa } from "../lib/finance/baseline";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -34,22 +35,6 @@ const ADMIN_PASSWORD = requiredEnv("SEED_ADMIN_PASSWORD");
 const ORG_NAME = process.env.SEED_ORG_NAME ?? "POSPLUS Test Organization";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: DATABASE_URL }) });
-
-// Minimal, recognizable baseline chart of accounts.
-const BASELINE_COA: Array<{ code: string; name: string; type: GLAccountType }> = [
-  { code: "1000", name: "Cash on Hand", type: GLAccountType.ASSET },
-  { code: "1010", name: "Bank Account", type: GLAccountType.ASSET },
-  { code: "1100", name: "Accounts Receivable", type: GLAccountType.ASSET },
-  { code: "1200", name: "Inventory", type: GLAccountType.ASSET },
-  { code: "2000", name: "Accounts Payable", type: GLAccountType.LIABILITY },
-  { code: "2100", name: "Payroll Liabilities", type: GLAccountType.LIABILITY },
-  { code: "3000", name: "Owner's Equity", type: GLAccountType.EQUITY },
-  { code: "4000", name: "Sales Revenue", type: GLAccountType.REVENUE },
-  { code: "4100", name: "Refunds (Contra Revenue)", type: GLAccountType.REVENUE },
-  { code: "5000", name: "Cost of Goods Sold", type: GLAccountType.EXPENSE },
-  { code: "6000", name: "Operating Expenses", type: GLAccountType.EXPENSE },
-  { code: "6100", name: "Labor Cost", type: GLAccountType.EXPENSE },
-];
 
 async function main() {
   const user = await prisma.user.upsert({
@@ -105,35 +90,9 @@ async function main() {
     },
   });
 
-  for (const account of BASELINE_COA) {
-    await prisma.gLAccount.upsert({
-      where: {
-        organizationId_code: { organizationId: organization.id, code: account.code },
-      },
-      update: {},
-      create: { organizationId: organization.id, ...account },
-    });
-  }
-
-  // Baseline mapping: default Loyverse payment types -> GL accounts.
-  const cashAccount = await prisma.gLAccount.findFirstOrThrow({
-    where: { organizationId: organization.id, code: "1000" },
-  });
-  const bankAccount = await prisma.gLAccount.findFirstOrThrow({
-    where: { organizationId: organization.id, code: "1010" },
-  });
-  for (const paymentType of ["Cash", "Card"]) {
-    await prisma.gLMapping.upsert({
-      where: { id: `seed-mapping-${paymentType.toLowerCase()}` },
-      update: {},
-      create: {
-        id: `seed-mapping-${paymentType.toLowerCase()}`,
-        organizationId: organization.id,
-        paymentType,
-        accountId: paymentType === "Cash" ? cashAccount.id : bankAccount.id,
-      },
-    });
-  }
+  // Baseline chart of accounts + default GL mappings (shared with the
+  // post-sync setup checklist — lib/finance/baseline.ts, #10).
+  await ensureBaselineCoa(organization.id);
 
   await prisma.supplier.upsert({
     where: { id: "seed-supplier-1" },

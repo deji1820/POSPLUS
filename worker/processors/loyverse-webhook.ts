@@ -10,7 +10,8 @@
  *   2. dispatch — single-record idempotent upserts via the shared records
  *      mapping (lib/loyverse/webhook/handlers.ts).
  *   3. side effects — receipts/refunds enqueue finance-posting jobs (#11,
- *      SPEC.md §9 "update the local read model and enqueue finance posting").
+ *      SPEC.md §9 "update the local read model and enqueue finance posting")
+ *      AND inventory projection jobs (#16).
  *      This runs AFTER the event is marked PROCESSED and outside the dispatch
  *      catch: a queue blip rethrows for a BullMQ retry (the redispatch is
  *      idempotent and the deterministic jobIds dedupe re-enqueues) instead of
@@ -28,6 +29,7 @@ import type { Job } from "bullmq";
 import { prisma } from "@/lib/db";
 import { dispatchWebhookEvent } from "@/lib/loyverse/webhook/handlers";
 import {
+  enqueueInventoryApply,
   enqueueReceiptPosting,
   enqueueRefundPosting,
   type LoyverseWebhookJobData,
@@ -83,7 +85,7 @@ export async function processLoyverseWebhookJob(
 
   let postingTargets: { receiptIds: string[]; refundIds: string[] } | null = null;
   try {
-    const result = await dispatchWebhookEvent({ organizationId, eventType, payload });
+    const result = await dispatchWebhookEvent({ organizationId, eventType, payload, webhookEventId: event.id });
     if (result.status === "IGNORED") {
       await mark("IGNORED", null);
       await audit("webhook.ignored", {
@@ -102,6 +104,7 @@ export async function processLoyverseWebhookJob(
       resource: result.resource,
       records: result.records,
       refunds: result.refunds,
+      ...(result.note ? { note: result.note } : {}),
     });
     jobLog(job.id ?? webhookEventId, "webhook processed", {
       eventId: event.id,
@@ -124,17 +127,19 @@ export async function processLoyverseWebhookJob(
     throw new UnrecoverableError(safe);
   }
 
-  // §9 side effect: schedule ledger posting for the receipts/refunds this
-  // event wrote. Deliberately OUTSIDE the catch above: a queue blip rethrows
-  // for a BullMQ retry (the redispatch is idempotent and the deterministic
-  // jobIds dedupe the re-enqueue) instead of flipping an already-PROCESSED
-  // event to FAILED.
+  // §9 side effects: schedule ledger posting AND the inventory projection for
+  // the receipts/refunds this event wrote. Deliberately OUTSIDE the catch
+  // above: a queue blip rethrows for a BullMQ retry (the redispatch is
+  // idempotent and the deterministic jobIds dedupe the re-enqueue) instead of
+  // flipping an already-PROCESSED event to FAILED.
   if (postingTargets) {
     for (const receiptId of postingTargets.receiptIds) {
       await enqueueReceiptPosting({ receiptId, organizationId: event.organizationId });
+      await enqueueInventoryApply({ kind: "receipt", sourceId: receiptId, organizationId: event.organizationId });
     }
     for (const refundId of postingTargets.refundIds) {
       await enqueueRefundPosting({ refundId, organizationId: event.organizationId });
+      await enqueueInventoryApply({ kind: "refund", sourceId: refundId, organizationId: event.organizationId });
     }
     if (
       postingTargets.receiptIds.length > 0 ||

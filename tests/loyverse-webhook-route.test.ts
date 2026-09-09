@@ -52,7 +52,7 @@ vi.mock("@/lib/loyverse/webhook/resolve-org", () => ({
 }));
 
 vi.mock("@/lib/auth/rate-limit", () => ({
-  checkRateLimit: vi.fn(() => true),
+  checkRateLimit: vi.fn(async () => true),
 }));
 
 vi.mock("@/worker/log", () => ({
@@ -99,7 +99,7 @@ beforeEach(() => {
   process.env.LOYVERSE_WEBHOOK_SECRET = SECRET;
   mocks.webhookEventCreate.mockResolvedValue({ id: "evt-1" });
   vi.mocked(resolveWebhookOrganization).mockResolvedValue("org-1");
-  vi.mocked(checkRateLimit).mockReturnValue(true); // clearAllMocks keeps prior mockReturnValue
+  vi.mocked(checkRateLimit).mockResolvedValue(true); // clearAllMocks keeps prior mockResolvedValue
   vi.mocked(enqueueLoyverseWebhook).mockResolvedValue(undefined);
 });
 
@@ -270,7 +270,7 @@ describe("POST /api/loyverse/webhook — validation, attribution, idempotency", 
   });
 
   it("returns 429 when the source IP is rate limited", async () => {
-    vi.mocked(checkRateLimit).mockReturnValue(false);
+    vi.mocked(checkRateLimit).mockResolvedValue(false);
     const res = await POST(signed(RECEIPT_BODY));
     expect(res.status).toBe(429);
     expect(mocks.webhookEventCreate).not.toHaveBeenCalled();

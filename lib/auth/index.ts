@@ -19,9 +19,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = String(credentials?.password ?? "");
         if (!email || !password) return null;
 
-        // SPEC.md §18: rate-limit authentication endpoints. Per-email window;
-        // production Redis backing lands with #34.
-        if (!checkRateLimit(`login:${email}`)) return null;
+        // SPEC.md §18: rate-limit authentication endpoints. Per-email window,
+        // Redis-shared across replicas (#34); the per-IP limit on the callback
+        // route itself lives in app/api/auth/[...nextauth]/route.ts.
+        if (!(await checkRateLimit(`login:${email}`))) return null;
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || user.status !== "active") return null;

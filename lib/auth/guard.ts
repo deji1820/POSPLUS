@@ -22,6 +22,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { apiError } from "@/lib/api/envelope";
+import { unexpectedErrorResponse } from "@/lib/api/handler";
+import { resolveRequestId, runWithRequestContext } from "@/lib/api/request-context";
 import {
   hasModuleAccess,
   type Module,
@@ -77,8 +79,14 @@ export function withAuth(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): (req: NextRequest, routeCtx?: { params: Promise<any> }) => Promise<Response> {
   return async (req, routeCtx) => {
-    try {
-      const sessionCtx = await getSessionContext();
+    // Every guarded response (denial, domain error, unexpected throw)
+    // carries this requestId — echoed on the matching server log lines
+    // (§24 correlation). Established before auth so even 401/403 denials
+    // are traceable.
+    const requestId = resolveRequestId(req);
+    return runWithRequestContext(requestId, async () => {
+      try {
+        const sessionCtx = await getSessionContext();
 
       if (!hasModuleAccess(sessionCtx.role, options.module)) {
         throw new AuthContextError(
@@ -119,8 +127,11 @@ export function withAuth(
       )(req, sessionCtx);
     } catch (error) {
       if (error instanceof AuthContextError) return deny(error);
-      throw error; // unexpected errors bubble to Next error handling — never leak details here
+      // §19: ANY thrown exception returns the stable envelope — the
+      // requestId on the response matches the requestId logged here.
+      return unexpectedErrorResponse(error);
     }
+    });
   };
 }
 

@@ -7,15 +7,23 @@
  * (e.g. "customers.update", "receipts.create"); the resource array rides in
  * the payload under the resource name (e.g. `customers: [{...}]`).
  *
- * Deferred side effects (documented follow-ups, recorded in the audit note):
- * - `inventory_levels.*` — needs the store→warehouse mapping + inventory
- *   projection from the inventory issues; IGNORED until then.
+ * Snapshot side effects (issue #16):
+ * - `inventory_levels.*` — applied INLINE during dispatch: one ADJUSTMENT
+ *   movement per level (delta = reported stock − current on-hand) via
+ *   lib/inventory/projection.ts. This is the absolute-truth reconciliation
+ *   path for stock changed outside POSPLUS. Receipt/refund inventory
+ *   projection is NOT inline — the webhook processor enqueues
+ *   `apply-inventory-for-*` jobs after the event is PROCESSED (§9 side
+ *   effects), mirroring the finance-posting handoff.
  * - reorder / analytics triggers — land with the inventory issues.
  *
  * Receipt/refund finance-posting enqueue (#11) is NOT deferred: the dispatch
  * result carries the local receipt/refund ids and the webhook processor
  * enqueues `post-*-to-ledger` jobs after the event is marked PROCESSED.
  */
+import { Prisma } from "@prisma/client";
+
+import { applyInventoryLevelSnapshot } from "@/lib/inventory/projection";
 import { UnrecoverableError } from "@/lib/queue/errors";
 import {
   asString,
@@ -46,8 +54,12 @@ export interface WebhookDispatchResult {
   note?: string;
 }
 
-/** `inventory_levels.*` — deferred until the inventory projection lands. */
-const DEFERRED_RESOURCES = new Set(["inventory_levels"]);
+/**
+ * Deferred resources remain documented follow-ups, recorded in the audit
+ * note. `inventory_levels` left the set with #16 — it is handled inline
+ * below.
+ */
+const DEFERRED_RESOURCES = new Set<string>();
 
 /**
  * Resource prefix → single-record upsert. Returns records written, or null
@@ -105,6 +117,8 @@ export async function dispatchWebhookEvent(input: {
   organizationId: string;
   eventType: string;
   payload: Record<string, unknown>;
+  /** Stored event id — snapshot dedupe keys embed it so replays skip. */
+  webhookEventId?: string;
 }): Promise<WebhookDispatchResult> {
   const { organizationId, eventType, payload } = input;
   const resource = eventType.split(".")[0]?.trim().toLowerCase() ?? "";
@@ -118,6 +132,42 @@ export async function dispatchWebhookEvent(input: {
       receiptIds: [],
       refundIds: [],
       note: `${resource} projection deferred to the inventory issues; event recorded but not applied.`,
+    };
+  }
+
+  if (resource === "inventory_levels") {
+    const records = resourceRecords(payload, "inventory_levels");
+    let applied = 0;
+    let skipped = 0;
+    let unchanged = 0;
+    const eventKey = input.webhookEventId ?? "unknown";
+    for (const record of records) {
+      const variantLoyverseId = asString(record.variant_id);
+      const storeLoyverseId = asString(record.store_id);
+      const inStockRaw = record.in_stock;
+      if (!variantLoyverseId || !storeLoyverseId ||
+          (typeof inStockRaw !== "number" && typeof inStockRaw !== "string")) {
+        skipped += 1;
+        continue; // structurally invalid level — the sync will repair it
+      }
+      const outcome = await applyInventoryLevelSnapshot(organizationId, {
+        variantLoyverseId,
+        storeLoyverseId,
+        inStock: new Prisma.Decimal(inStockRaw),
+        dedupeKey: `snapshot:${eventKey}:${variantLoyverseId}:${storeLoyverseId}`,
+      });
+      if (outcome.status === "applied" || outcome.status === "alreadyApplied") applied += 1;
+      else if (outcome.status === "noChange") unchanged += 1;
+      else skipped += 1;
+    }
+    return {
+      status: "PROCESSED",
+      resource,
+      records: applied,
+      refunds: 0,
+      receiptIds: [],
+      refundIds: [],
+      note: `inventory levels applied=${applied} unchanged=${unchanged} skipped=${skipped}`,
     };
   }
 

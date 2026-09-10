@@ -37,11 +37,13 @@ vi.mock("@/lib/loyverse/webhook/handlers", () => ({
 const enqueue = vi.hoisted(() => ({
   receipt: vi.fn(),
   refund: vi.fn(),
+  inventory: vi.fn(),
 }));
 
 vi.mock("@/lib/queue/enqueue", () => ({
   enqueueReceiptPosting: enqueue.receipt,
   enqueueRefundPosting: enqueue.refund,
+  enqueueInventoryApply: enqueue.inventory,
 }));
 
 const EVENT: WebhookEvent = {
@@ -74,6 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   enqueue.receipt.mockResolvedValue(undefined);
   enqueue.refund.mockResolvedValue(undefined);
+  enqueue.inventory.mockResolvedValue(undefined);
   mocks.webhookEventFindUnique.mockResolvedValue(EVENT);
 });
 
@@ -118,6 +121,7 @@ describe("processLoyverseWebhookJob — state machine + audit", () => {
       organizationId: "org-1",
       eventType: "customers.update",
       payload: PAYLOAD,
+      webhookEventId: "evt-1",
     });
     expect(mocks.webhookEventUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -197,8 +201,8 @@ describe("processLoyverseWebhookJob — state machine + audit", () => {
   });
 });
 
-describe("processLoyverseWebhookJob — finance-posting enqueue (#11)", () => {
-  it("enqueues posting jobs for the receipts and refunds the event wrote", async () => {
+describe("processLoyverseWebhookJob — finance-posting + inventory enqueue (#11/#16)", () => {
+  it("enqueues posting and inventory jobs for the receipts and refunds the event wrote", async () => {
     vi.mocked(dispatchWebhookEvent).mockResolvedValue({
       status: "PROCESSED",
       resource: "receipts",
@@ -214,6 +218,12 @@ describe("processLoyverseWebhookJob — finance-posting enqueue (#11)", () => {
     expect(enqueue.receipt).toHaveBeenCalledWith({ receiptId: "rec-2", organizationId: "org-1" });
     expect(enqueue.refund).toHaveBeenCalledTimes(1);
     expect(enqueue.refund).toHaveBeenCalledWith({ refundId: "ref-1", organizationId: "org-1" });
+    // §9 side effects (#16): the same receipts/refunds schedule their
+    // inventory projection on the `inventory` queue.
+    expect(enqueue.inventory).toHaveBeenCalledTimes(3);
+    expect(enqueue.inventory).toHaveBeenCalledWith({ kind: "receipt", sourceId: "rec-1", organizationId: "org-1" });
+    expect(enqueue.inventory).toHaveBeenCalledWith({ kind: "receipt", sourceId: "rec-2", organizationId: "org-1" });
+    expect(enqueue.inventory).toHaveBeenCalledWith({ kind: "refund", sourceId: "ref-1", organizationId: "org-1" });
     // The event was already marked PROCESSED before the enqueue ran.
     expect(mocks.webhookEventUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "PROCESSED" }) }),
@@ -232,6 +242,7 @@ describe("processLoyverseWebhookJob — finance-posting enqueue (#11)", () => {
     await processLoyverseWebhookJob(fakeJob(JOB_DATA));
     expect(enqueue.receipt).not.toHaveBeenCalled();
     expect(enqueue.refund).not.toHaveBeenCalled();
+    expect(enqueue.inventory).not.toHaveBeenCalled();
   });
 
   it("an enqueue failure rejects for a BullMQ retry but leaves the event PROCESSED", async () => {

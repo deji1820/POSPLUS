@@ -198,6 +198,7 @@ model Organization {
   payments                     Payment[]
   inventoryBalances            InventoryBalance[]
   inventoryMovements           InventoryMovement[]
+  stockWritebackRequests       StockWritebackRequest[]
   reorderSuggestions           ReorderSuggestion[]
   suppliers                    Supplier[]
   scorecardSnapshots           SupplierScorecardSnapshot[]
@@ -765,6 +766,13 @@ model InventoryMovement {
   type           InventoryMovementType
   referenceType  String? // e.g. PURCHASE_ORDER, STOCK_TRANSFER, PRODUCTION_ORDER
   referenceId    String?
+  /**
+   * Idempotency key — one movement per source line / snapshot, unique per org.
+   * A retried webhook dispatch or job re-run that hits this key has already
+   * been applied (its balance change committed in the same transaction) and
+   * skips instead of double-applying (issue #16).
+   */
+  dedupeKey      String?
   actorId        String?
   createdAt      DateTime              @default(now())
 
@@ -772,8 +780,43 @@ model InventoryMovement {
   warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   variant      Variant      @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
+  @@unique([organizationId, dedupeKey])
   @@index([organizationId, createdAt])
   @@index([warehouseId, variantId])
+}
+
+/**
+ * Outbound stock write-back to Loyverse (issue #16, SPEC.md §8/§16): one row
+ * per write-back attempt with the sanitized request/response metadata — ids,
+ * quantity, endpoint, HTTP status, sanitized response body. Secrets (the API
+ * key) are NEVER stored here; the key is decrypted only in-memory at send
+ * time and never appears in any recorded payload.
+ */
+model StockWritebackRequest {
+  id             String    @id @default(cuid())
+  organizationId String
+  variantId      String
+  storeId        String?
+  /** Absolute stock level to set (Loyverse `stock_after` semantics). */
+  quantity       Decimal   @db.Decimal(14, 3)
+  reason         String
+  /** What triggered the write-back (e.g. GOODS_RECEIPT, STOCK_TRANSFER). */
+  referenceType  String?
+  referenceId    String?
+  status         String    @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  /** Sanitized outbound body: variant/store ids + quantity only. */
+  requestPayload Json?
+  responseStatus Int?
+  /** Sanitized response metadata (in_stock / updated_at per level). */
+  responseBody   Json?
+  /** Operator-safe failure summary when status = FAILED. */
+  error          String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
 }
 
 model ReorderSuggestion {

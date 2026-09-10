@@ -8,9 +8,10 @@
  * recorded on the run AND rethrown so BullMQ retries with backoff (§19) and
  * the retried job resumes from the persisted checkpoint.
  */
-import type { SyncRun } from "@prisma/client";
+import type { Prisma, SyncRun } from "@prisma/client";
 import type { Job } from "bullmq";
 
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { runLoyverseSync } from "@/lib/loyverse/sync/engine";
 import { prisma } from "@/lib/db";
 import {
@@ -48,6 +49,24 @@ export async function processLoyverseSyncJob(
     where: { id: run.id },
     data: { status: "RUNNING", startedAt: new Date(), finishedAt: null, errorSummary: null },
   });
+  // §17: one audit row per state transition. Runs are system-driven, so the
+  // actor is null and metadata carries the sanitized progress signal (counts,
+  // safe error summary — never the raw engine error).
+  const audit = (
+    action:
+      | typeof AUDIT_ACTIONS.SYNC.STARTED
+      | typeof AUDIT_ACTIONS.SYNC.COMPLETED
+      | typeof AUDIT_ACTIONS.SYNC.FAILED,
+    metadata: Prisma.InputJsonValue,
+  ) =>
+    writeAudit({
+      organizationId: run.organizationId,
+      action,
+      entityType: "SyncRun",
+      entityId: run.id,
+      metadataJson: metadata,
+    });
+  await audit(AUDIT_ACTIONS.SYNC.STARTED, { type: run.type });
 
   try {
     const result = await engine(run);
@@ -60,16 +79,22 @@ export async function processLoyverseSyncJob(
         errorSummary: null, // clear any summary from a previous failed attempt
       },
     });
+    await audit(AUDIT_ACTIONS.SYNC.COMPLETED, { counts: result.counts });
   } catch (error) {
     // The safe reason is preserved on the run (operator-facing) regardless
     // of whether BullMQ will retry it.
+    const safeSummary = safeJobErrorMessage(error);
     await prisma.syncRun.update({
       where: { id: run.id },
       data: {
         status: "FAILED",
         finishedAt: new Date(),
-        errorSummary: safeJobErrorMessage(error),
+        errorSummary: safeSummary,
       },
+    });
+    await audit(AUDIT_ACTIONS.SYNC.FAILED, {
+      errorSummary: safeSummary,
+      willRetry: isTransient(error),
     });
     // Permanent failures are fully recorded above — the job itself completes
     // so operator-correctable failures don't dead-letter by default.

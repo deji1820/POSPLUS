@@ -26,6 +26,7 @@
  */
 import type { Job } from "bullmq";
 
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { prisma } from "@/lib/db";
 import { dispatchWebhookEvent } from "@/lib/loyverse/webhook/handlers";
 import {
@@ -66,20 +67,21 @@ export async function processLoyverseWebhookJob(
     });
 
   const audit = (
-    action: "webhook.processed" | "webhook.ignored" | "webhook.failed",
+    action:
+      | typeof AUDIT_ACTIONS.WEBHOOK.PROCESSED
+      | typeof AUDIT_ACTIONS.WEBHOOK.IGNORED
+      | typeof AUDIT_ACTIONS.WEBHOOK.FAILED,
     metadata: Record<string, unknown>,
   ) =>
-    prisma.auditLog.create({
-      data: {
-        organizationId: event.organizationId,
-        action,
-        entityType: "WebhookEvent",
-        entityId: event.id,
-        metadataJson: {
-          externalEventId: event.externalEventId,
-          eventType: event.eventType,
-          ...metadata,
-        },
+    writeAudit({
+      organizationId: event.organizationId,
+      action,
+      entityType: "WebhookEvent",
+      entityId: event.id,
+      metadataJson: {
+        externalEventId: event.externalEventId,
+        eventType: event.eventType,
+        ...metadata,
       },
     });
 
@@ -88,7 +90,7 @@ export async function processLoyverseWebhookJob(
     const result = await dispatchWebhookEvent({ organizationId, eventType, payload, webhookEventId: event.id });
     if (result.status === "IGNORED") {
       await mark("IGNORED", null);
-      await audit("webhook.ignored", {
+      await audit(AUDIT_ACTIONS.WEBHOOK.IGNORED, {
         resource: result.resource,
         note: result.note ?? null,
       });
@@ -100,7 +102,7 @@ export async function processLoyverseWebhookJob(
       return;
     }
     await mark("PROCESSED", null);
-    await audit("webhook.processed", {
+    await audit(AUDIT_ACTIONS.WEBHOOK.PROCESSED, {
       resource: result.resource,
       records: result.records,
       refunds: result.refunds,
@@ -117,7 +119,7 @@ export async function processLoyverseWebhookJob(
   } catch (error) {
     const safe = safeJobErrorMessage(error);
     await mark("FAILED", safe);
-    await audit("webhook.failed", { error: safe });
+    await audit(AUDIT_ACTIONS.WEBHOOK.FAILED, { error: safe });
     jobLog(job.id ?? webhookEventId, "webhook failed", {
       eventId: event.id,
       eventType,

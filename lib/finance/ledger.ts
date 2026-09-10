@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { Prisma } from "@prisma/client";
 
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { prisma } from "@/lib/db";
 import { FinanceError } from "@/lib/finance/errors";
 
@@ -335,26 +336,52 @@ export async function reverseEntry(
           },
         },
       });
-      await tx.auditLog.create({
-        data: {
+      // Original entry's observable state for beforeJson (Decimal-exact).
+      let originalDebit = new Prisma.Decimal(0);
+      let originalCredit = new Prisma.Decimal(0);
+      for (const line of original.lines) {
+        originalDebit = originalDebit.plus(line.debit as number | string | Prisma.Decimal);
+        originalCredit = originalCredit.plus(line.credit as number | string | Prisma.Decimal);
+      }
+      // Central writer (§17): the pair of rows reconstructs the reversal —
+      // beforeJson carries the original's observable state, afterJson the
+      // new reversal entry; actor is the reversing operator when known.
+      const originalState = {
+        description: original.description,
+        totalDebit: originalDebit.toFixed(2),
+        totalCredit: originalCredit.toFixed(2),
+        lineCount: original.lines.length,
+      };
+      await writeAudit(
+        {
           organizationId: orgId,
           actorUserId: actorId ?? null,
-          action: "journal.reversed",
+          action: AUDIT_ACTIONS.JOURNAL.REVERSED,
           entityType: "JournalEntry",
           entityId: original.id,
+          beforeJson: originalState,
+          afterJson: { reversedByEntryId: created.id },
           metadataJson: { reason, reversalEntryId: created.id },
         },
-      });
-      await tx.auditLog.create({
-        data: {
+        tx,
+      );
+      await writeAudit(
+        {
           organizationId: orgId,
           actorUserId: actorId ?? null,
-          action: "journal.posted",
+          action: AUDIT_ACTIONS.JOURNAL.POSTED,
           entityType: "JournalEntry",
           entityId: created.id,
+          afterJson: {
+            journalEntryId: created.id,
+            source: "reversal",
+            reversalOfId: original.id,
+            lineCount: original.lines.length,
+          },
           metadataJson: { source: "reversal", reversalOfId: original.id, reason },
         },
-      });
+        tx,
+      );
       return created;
     });
     return { reversalEntryId: reversal.id };

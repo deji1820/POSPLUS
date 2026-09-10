@@ -15,9 +15,11 @@
  *
  * Coverage this sprint (issue #15): auth login/logout/failure, integration
  * credential changes, sync runs, webhook verification outcome, journal
- * posting/reversal. Later sprints add PO, inventory, BOM, production,
- * payroll, and document events — they register new actions in
- * AUDIT_ACTIONS and call writeAudit the same way.
+ * posting/reversal. Settings events (organization, store, warehouse,
+ * membership/scope, payroll rules, dashboard preferences) register with #37.
+ * Later sprints add PO, inventory, BOM, production, and document events —
+ * they register new actions in AUDIT_ACTIONS and call writeAudit the same
+ * way.
  */
 import { Prisma } from "@prisma/client";
 
@@ -51,6 +53,22 @@ export const AUDIT_ACTIONS = {
   JOURNAL: {
     POSTED: "journal.posted",
     REVERSED: "journal.reversed",
+  },
+  SETTINGS: {
+    ORGANIZATION_UPDATED: "organization.updated",
+    STORE_CREATED: "store.created",
+    STORE_UPDATED: "store.updated",
+    WAREHOUSE_CREATED: "warehouse.created",
+    WAREHOUSE_UPDATED: "warehouse.updated",
+    MEMBERSHIP_CREATED: "membership.created",
+    MEMBERSHIP_ROLE_CHANGED: "membership.role_changed",
+    MEMBERSHIP_STATUS_CHANGED: "membership.status_changed",
+    MEMBERSHIP_STORE_SCOPE_CHANGED: "membership.store_scope_changed",
+    MEMBERSHIP_WAREHOUSE_SCOPE_CHANGED: "membership.warehouse_scope_changed",
+    PAYROLL_DEDUCTION_CREATED: "payroll.deduction_created",
+    PAYROLL_DEDUCTION_UPDATED: "payroll.deduction_updated",
+    PAYROLL_PERIOD_CREATED: "payroll.period_created",
+    DASHBOARD_PREFERENCE_SAVED: "dashboard.preference_saved",
   },
 } as const;
 

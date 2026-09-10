@@ -17,5 +17,10 @@ export default defineConfig({
     url:
       process.env.DATABASE_URL ??
       "postgresql://placeholder:placeholder@localhost:5432/posplus_placeholder",
+    // Only used by `migrate diff --from-migrations` (needs a scratch DB to
+    // replay history); never touched by migrate dev/deploy/generate.
+    shadowDatabaseUrl:
+      process.env.SHADOW_DATABASE_URL ??
+      "postgresql://placeholder:placeholder@localhost:5432/posplus_placeholder",
   },
 });

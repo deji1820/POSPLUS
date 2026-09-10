@@ -349,6 +349,10 @@ model LoyverseConnection {
   updatedAt       DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Created by 20260909003000_connection_merchant_id; webhook routing looks
+  // connections up by merchant id, so the index must stay.
+  @@index([merchantId])
 }
 
 model WebhookEvent {
@@ -1404,11 +1408,14 @@ model Document {
   id             String         @id @default(cuid())
   organizationId String
   entityType     String
-  entityId       String
+  /** null for parameterized documents (P&L period reports have no single entity). */
+  entityId       String?
   storageKey     String
   contentType    String
   checksum       String
   status         DocumentStatus @default(PENDING)
+  /** Generation inputs that are not an entity id (e.g. P&L period filters). */
+  paramsJson     Json?
   createdAt      DateTime       @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)

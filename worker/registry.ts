@@ -3,7 +3,8 @@
  *
  * `initial-loyverse-sync` / `incremental-loyverse-sync` (#6/#7),
  * `process-loyverse-webhook` (#9), `post-receipt-to-ledger` /
- * `post-refund-to-ledger` (#11), and the three document renders
+ * `post-refund-to-ledger` (#11), the inventory projection / stock
+ * write-back jobs (#16), and the three document renders
  * `generate-po-pdf` / `generate-payslip-pdf` / `generate-pnl-pdf` (#32)
  * have real processors; every other SPEC §10 job type routes to a permanent
  * not-implemented stub that dead-letters immediately with an operator-safe
@@ -17,6 +18,10 @@ import {
   processPostRefundToLedgerJob,
 } from "@/worker/processors/finance-posting";
 import { processGenerateDocumentJob } from "@/worker/processors/documents";
+import {
+  processApplyInventoryJob,
+  processStockWritebackJob,
+} from "@/worker/processors/inventory";
 import { processLoyverseSyncJob } from "@/worker/processors/loyverse-sync";
 import { processLoyverseWebhookJob } from "@/worker/processors/loyverse-webhook";
 
@@ -31,6 +36,9 @@ const registry = new Map<string, Processor>([
   ["generate-po-pdf", processGenerateDocumentJob as Processor],
   ["generate-payslip-pdf", processGenerateDocumentJob as Processor],
   ["generate-pnl-pdf", processGenerateDocumentJob as Processor],
+  ["apply-inventory-for-receipt", processApplyInventoryJob as Processor],
+  ["apply-inventory-for-refund", processApplyInventoryJob as Processor],
+  ["write-back-stock", processStockWritebackJob as Processor],
 ]);
 
 export function registerProcessor(jobName: string, processor: Processor): void {

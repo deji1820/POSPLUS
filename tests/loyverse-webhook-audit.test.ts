@@ -87,7 +87,7 @@ beforeEach(() => {
   mocks.webhookEventCreate.mockResolvedValue({ id: "evt-1" });
   mocks.auditLogCreate.mockResolvedValue({ id: "audit-1" });
   vi.mocked(resolveWebhookOrganization).mockResolvedValue("org-1");
-  vi.mocked(checkRateLimit).mockReturnValue(true);
+  vi.mocked(checkRateLimit).mockResolvedValue(true);
   vi.mocked(enqueueLoyverseWebhook).mockResolvedValue(undefined);
 });
 

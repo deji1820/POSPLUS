@@ -39,6 +39,19 @@ export interface PostRefundJobData {
   organizationId: string;
 }
 
+/** Inventory projection job (#16): apply one receipt/refund's lines as movements. */
+export interface ApplyInventoryJobData {
+  kind: "receipt" | "refund";
+  sourceId: string;
+  organizationId: string;
+}
+
+/** Outbound stock write-back job (#16): deliver one StockWritebackRequest. */
+export interface StockWritebackJobData {
+  stockWritebackRequestId: string;
+  organizationId: string;
+}
+
 function jobNameForRun(type: string): JobName {
   return type === "INITIAL" ? "initial-loyverse-sync" : "incremental-loyverse-sync";
 }
@@ -152,6 +165,27 @@ export async function enqueueRefundPosting(input: PostRefundJobData): Promise<vo
       "post-refund-to-ledger",
       input satisfies PostRefundJobData,
       { jobId: `post-refund-${input.refundId}` },
+    );
+  } catch (error) {
+    throw new QueueUnavailableError({ cause: error });
+  }
+}
+
+/**
+ * Enqueue the inventory projection for one receipt/refund (#16, SPEC.md §9
+ * side effects — the webhook processor schedules it after the event is
+ * PROCESSED, mirroring the finance-posting handoff). The projection is
+ * idempotent per line (`applyMovement` dedupe keys); `jobId` derives from the
+ * source id so a re-enqueue after a queue blip cannot schedule it twice.
+ */
+export async function enqueueInventoryApply(input: ApplyInventoryJobData): Promise<void> {
+  const jobName = (input.kind === "receipt" ? "apply-inventory-for-receipt" : "apply-inventory-for-refund") as JobName;
+  const queue = getQueue(JOB_QUEUES[jobName]);
+  try {
+    await queue.add(
+      jobName,
+      input satisfies ApplyInventoryJobData,
+      { jobId: `inv-${input.kind}-${input.sourceId}` },
     );
   } catch (error) {
     throw new QueueUnavailableError({ cause: error });

@@ -17,6 +17,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "rotate-keys": "tsx scripts/rotate-encryption-key.ts",
+    "rotate-keys:dry-run": "tsx scripts/rotate-encryption-key.ts --dry-run",
     "worker": "tsx worker/index.ts"
   },
   "dependencies": {

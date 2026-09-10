@@ -33,8 +33,11 @@ export const JOB_QUEUES = {
   "incremental-loyverse-sync": "loyverse-sync",
   "post-receipt-to-ledger": "finance-posting",
   "post-refund-to-ledger": "finance-posting",
-  // `inventory` queue: goods-receipt/stock-movement jobs land with the
-  // inventory issues; no SPEC §10 job is assigned to it yet.
+  // `inventory` queue (#16): projection jobs for webhook receipts/refunds and
+  // outbound stock write-backs.
+  "apply-inventory-for-receipt": "inventory",
+  "apply-inventory-for-refund": "inventory",
+  "write-back-stock": "inventory",
   "recalculate-reorder-points": "reorder",
   "calculate-payroll": "payroll",
   "generate-po-pdf": "documents",

@@ -99,6 +99,33 @@ export async function enqueueLoyverseWebhook(input: {
 }
 
 /**
+ * Enqueue a document render job (#32, SPEC.md §10 documents queue). The
+ * jobId is derived from the Document id: re-requesting the same row (e.g. a
+ * retry after QUEUE_UNAVAILABLE) cannot schedule the same render twice —
+ * BullMQ keeps the first job and its idempotency makes the enqueue a no-op.
+ */
+export async function enqueueGenerateDocumentPdf(input: {
+  jobName: string;
+  documentId: string;
+  organizationId: string;
+}): Promise<void> {
+  const jobName = input.jobName as JobName;
+  const queue = getQueue(JOB_QUEUES[jobName]);
+  try {
+    await queue.add(
+      jobName,
+      {
+        documentId: input.documentId,
+        organizationId: input.organizationId,
+      },
+      { jobId: `document-pdf-${input.documentId}` },
+    );
+  } catch (error) {
+    throw new QueueUnavailableError({ cause: error });
+  }
+}
+
+/**
  * Enqueue a receipt → ledger posting (SPEC.md §11, #11). `jobId` derives from
  * the local receipt id so a retried enqueue (webhook redelivery, sync resume)
  * cannot schedule the same posting twice — the posting itself is idempotent

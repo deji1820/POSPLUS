@@ -9,3 +9,5 @@ allowBuilds:
   prisma: true
   unrs-resolver: true
   workerd: true
+patchedDependencies:
+  '@react-pdf/hyphenate': patches/@react-pdf__hyphenate.patch

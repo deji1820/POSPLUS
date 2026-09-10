@@ -1,0 +1,14 @@
+diff --git a/package.json b/package.json
+index 477fe06e7938a695df193bb1af1d70880078ffad..3ecf6a8c729e045c0a3844954e69abcdab62a2ba 100644
+--- a/package.json
++++ b/package.json
+@@ -15,7 +15,8 @@
+     },
+     "./*": {
+       "types": "./lib/*.d.ts",
+-      "import": "./lib/*.js"
++      "import": "./lib/*.js",
++      "default": "./lib/*.js"
+     }
+   },
+   "typesVersions": {

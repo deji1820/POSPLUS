@@ -70,6 +70,11 @@ export const AUDIT_ACTIONS = {
     PAYROLL_PERIOD_CREATED: "payroll.period_created",
     DASHBOARD_PREFERENCE_SAVED: "dashboard.preference_saved",
   },
+  DOCUMENTS: {
+    REQUESTED: "document.requested",
+    GENERATED: "document.generated",
+    GENERATION_FAILED: "document.generation_failed",
+  },
 } as const;
 
 export interface AuditEntryInput {

@@ -6,9 +6,15 @@
  * writer is deliberately boring:
  *
  *   - it NEVER throws — an audit failure must not break the business flow
- *     it observes (it is logged server-side instead);
+ *     it observes (it is logged server-side instead). Corollary: when the
+ *     caller passes a transaction client and swallows our error, the failed
+ *     statement has already aborted the enclosing transaction (Postgres),
+ *     and Prisma 7 sequential transactions then roll back EVERYTHING while
+ *     still resolving (verified E2E). Callers that cannot let the error
+ *     propagate must audit AFTER commit, not inside the transaction;
  *   - it accepts a transaction client so writers inside a $transaction
- *     commit atomically with the change they describe;
+ *     commit atomically with the change they describe — but ONLY when the
+ *     caller will let a failure abort the flow;
  *   - it carries NO secrets — callers must put only sanitized state into
  *     the json fields (no credentials, tokens, or raw webhook bodies;
  *     §18/§24: prefer event IDs and sanitized metadata).
@@ -74,6 +80,10 @@ export const AUDIT_ACTIONS = {
     REQUESTED: "document.requested",
     GENERATED: "document.generated",
     GENERATION_FAILED: "document.generation_failed",
+  },
+  REORDER: {
+    SUGGESTION_ACCEPTED: "reorder.accepted",
+    SUGGESTION_DISMISSED: "reorder.dismissed",
   },
 } as const;
 

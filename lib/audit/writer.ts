@@ -75,6 +75,12 @@ export const AUDIT_ACTIONS = {
     GENERATED: "document.generated",
     GENERATION_FAILED: "document.generation_failed",
   },
+  /** Nightly maintenance findings (#33) — system-driven, actor always null. */
+  MAINTENANCE: {
+    STALE_SYNC_RUN: "maintenance.stale_sync_run",
+    STALE_WEBHOOK: "maintenance.stale_webhook",
+    RECONCILIATION_MISMATCH: "maintenance.reconciliation_mismatch",
+  },
 } as const;
 
 export interface AuditEntryInput {

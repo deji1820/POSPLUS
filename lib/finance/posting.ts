@@ -27,6 +27,7 @@
  */
 import { Prisma } from "@prisma/client";
 
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { prisma } from "@/lib/db";
 import { FinanceError } from "@/lib/finance/errors";
 
@@ -236,15 +237,26 @@ async function insertPosting(input: {
           sourceTotal: input.sourceLink.sourceTotal.toFixed(2),
         },
       });
-      await tx.auditLog.create({
-        data: {
+      // Central writer (§17): metadata is the sanitized source envelope,
+      // afterJson is the observable result — together they make the row
+      // reconstruct what was posted without any secret material.
+      await writeAudit(
+        {
           organizationId: input.orgId,
-          action: "journal.posted",
+          action: AUDIT_ACTIONS.JOURNAL.POSTED,
           entityType: "JournalEntry",
           entityId: created.id,
+          afterJson: {
+            journalEntryId: created.id,
+            source: input.audit.source,
+            total: input.audit.total,
+            lineCount: input.lines.length,
+            storeId: input.storeId,
+          },
           metadataJson: input.audit,
         },
-      });
+        tx,
+      );
       return created;
     });
     return { posted: true, journalEntryId: entry.id };

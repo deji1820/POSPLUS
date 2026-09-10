@@ -11,6 +11,7 @@ import {
 const mocks = vi.hoisted(() => ({
   syncRunFindUnique: vi.fn(),
   syncRunUpdate: vi.fn(),
+  auditLogCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -19,6 +20,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: mocks.syncRunFindUnique,
       update: mocks.syncRunUpdate,
     },
+    auditLog: { create: mocks.auditLogCreate },
   },
 }));
 
@@ -40,6 +42,7 @@ function fakeJob(data: { syncRunId: string; organizationId: string }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.auditLogCreate.mockResolvedValue({ id: "audit-1" });
 });
 
 describe("processLoyverseSyncJob (SyncRun lifecycle, SPEC.md §9/§19)", () => {
@@ -123,5 +126,52 @@ describe("processLoyverseSyncJob (SyncRun lifecycle, SPEC.md §9/§19)", () => {
     // Rethrown for retry, but the recorded summary must be safe.
     const final = mocks.syncRunUpdate.mock.calls.at(-1)![0].data;
     expect(final.errorSummary).toBe("Unexpected worker error. Retry the job or contact support.");
+  });
+
+  it("audits the run lifecycle: sync.started then sync.completed with counts (§17)", async () => {
+    mocks.syncRunFindUnique.mockResolvedValue(RUN);
+    const engine: SyncEngine = async () => ({ counts: { items: 12 } });
+
+    await processLoyverseSyncJob(fakeJob({ syncRunId: "run-1", organizationId: "org-1" }), engine);
+
+    const rows = mocks.auditLogCreate.mock.calls.map((c) => c[0].data);
+    expect(rows.map((r) => r.action)).toEqual(["sync.started", "sync.completed"]);
+    expect(rows[0]).toMatchObject({
+      organizationId: "org-1",
+      actorUserId: null,
+      entityType: "SyncRun",
+      entityId: "run-1",
+      metadataJson: { type: "MANUAL" },
+    });
+    expect(rows[1].metadataJson).toEqual({ counts: { items: 12 } });
+  });
+
+  it("audits sync.failed with the safe summary and willRetry flag (§17)", async () => {
+    mocks.syncRunFindUnique.mockResolvedValue(RUN);
+    const flaky: SyncEngine = async () => {
+      throw new TransientJobError("Loyverse API timeout");
+    };
+
+    await processLoyverseSyncJob(
+      fakeJob({ syncRunId: "run-1", organizationId: "org-1" }),
+      flaky,
+    ).catch(() => {});
+
+    const rows = mocks.auditLogCreate.mock.calls.map((c) => c[0].data);
+    expect(rows.map((r) => r.action)).toEqual(["sync.started", "sync.failed"]);
+    expect(rows[1].metadataJson).toEqual({
+      errorSummary: "Loyverse API timeout",
+      willRetry: true,
+    });
+  });
+
+  it("writes no audit rows when the run itself is rejected (missing/mismatch)", async () => {
+    mocks.syncRunFindUnique.mockResolvedValue(null);
+
+    await expect(
+      processLoyverseSyncJob(fakeJob({ syncRunId: "missing", organizationId: "org-1" })),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 });

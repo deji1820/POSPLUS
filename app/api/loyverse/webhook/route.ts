@@ -58,7 +58,7 @@ export const POST = apiRoute(handler);
 async function handler(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   const userAgent = req.headers.get("user-agent");
-  if (!checkRateLimit(`loyverse-webhook:${ip}`, 60, 60_000)) {
+  if (!(await checkRateLimit(`loyverse-webhook:${ip}`, 60, 60_000))) {
     return NextResponse.json(
       apiError("RATE_LIMITED", "Too many webhook requests. Slow down and retry."),
       { status: 429 },

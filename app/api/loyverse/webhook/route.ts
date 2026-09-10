@@ -18,6 +18,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { AUDIT_ACTIONS, writeAudit } from "@/lib/audit/writer";
 import { apiError, ok } from "@/lib/api/envelope";
 import { apiRoute } from "@/lib/api/handler";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -56,6 +57,7 @@ export const POST = apiRoute(handler);
 
 async function handler(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const userAgent = req.headers.get("user-agent");
   if (!checkRateLimit(`loyverse-webhook:${ip}`, 60, 60_000)) {
     return NextResponse.json(
       apiError("RATE_LIMITED", "Too many webhook requests. Slow down and retry."),
@@ -93,6 +95,36 @@ async function handler(req: NextRequest) {
   }
   if (!verified) {
     jobLog("webhook", "webhook rejected: invalid signature", { ip });
+    // §17 security audit: a rejected verification is recorded against the
+    // would-be organization when the merchant maps to one of ours. This is
+    // for security visibility only — the event is NOT attributed for
+    // business processing, nothing is stored, and an unresolvable merchant
+    // simply gets no row (organizationId is required on AuditLog).
+    let rejectedOrg: string | null = null;
+    let rejectedEventType: string | null = null;
+    try {
+      const parsedBody: unknown = JSON.parse(rawBody);
+      if (
+        typeof parsedBody === "object" && parsedBody !== null &&
+        typeof (parsedBody as { type?: unknown }).type === "string"
+      ) {
+        rejectedEventType = (parsedBody as { type: string }).type;
+      }
+      rejectedOrg = await resolveWebhookOrganization(parsedBody as Record<string, unknown>);
+    } catch {
+      // Unparseable body: no merchant to resolve — nothing to audit against.
+    }
+    if (rejectedOrg) {
+      await writeAudit({
+        organizationId: rejectedOrg,
+        action: AUDIT_ACTIONS.WEBHOOK.VERIFICATION_FAILED,
+        entityType: "WebhookEvent",
+        entityId: externalEventId(rawBody),
+        metadataJson: { reason: "invalid_signature", eventType: rejectedEventType },
+        ipAddress: ip,
+        userAgent,
+      });
+    }
     return NextResponse.json(
       apiError("INVALID_WEBHOOK_SIGNATURE", "Signature verification failed."),
       { status: 401 },
@@ -158,6 +190,18 @@ async function handler(req: NextRequest) {
         eventType: parsed.data.type,
         externalEventId: eventId,
       });
+      // §17: a replay is a webhook rejection the operator can query — the
+      // colliding identity is the before-state, the idempotent ack the after.
+      await writeAudit({
+        organizationId,
+        action: AUDIT_ACTIONS.WEBHOOK.DUPLICATE,
+        entityType: "WebhookEvent",
+        entityId: eventId,
+        beforeJson: { externalEventId: eventId, eventType: parsed.data.type },
+        afterJson: { received: true, duplicate: true },
+        ipAddress: ip,
+        userAgent,
+      });
       return NextResponse.json(ok({ received: true, duplicate: true }), { status: 200 });
     }
     throw error;
@@ -182,6 +226,16 @@ async function handler(req: NextRequest) {
           processedAt: new Date(),
         },
       });
+      await writeAudit({
+        organizationId,
+        action: AUDIT_ACTIONS.WEBHOOK.ENQUEUE_FAILED,
+        entityType: "WebhookEvent",
+        entityId: event.id,
+        afterJson: { received: true, enqueued: false },
+        metadataJson: { eventType: parsed.data.type, externalEventId: eventId },
+        ipAddress: ip,
+        userAgent,
+      });
       return NextResponse.json(
         apiError("QUEUE_UNAVAILABLE", "The background job queue is unavailable. The event is retained and can be retried."),
         { status: 503 },
@@ -194,6 +248,16 @@ async function handler(req: NextRequest) {
     eventId: event.id,
     eventType: parsed.data.type,
     organizationId,
+  });
+  // §17: the acceptance row — identity + request context, no payload (§24).
+  await writeAudit({
+    organizationId,
+    action: AUDIT_ACTIONS.WEBHOOK.ACCEPTED,
+    entityType: "WebhookEvent",
+    entityId: event.id,
+    afterJson: { eventType: parsed.data.type, externalEventId: eventId },
+    ipAddress: ip,
+    userAgent,
   });
   return NextResponse.json(ok({ received: true, eventId: event.id }), { status: 202 });
 }

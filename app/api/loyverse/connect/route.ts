@@ -30,7 +30,7 @@ export const POST = withAuth({ module: "SETTINGS" }, async (req: NextRequest, ct
   }
 
   try {
-    const connection = await connectLoyverse(ctx.orgId, parsed.apiKey);
+    const connection = await connectLoyverse(ctx.orgId, parsed.apiKey, ctx.userId);
     return NextResponse.json(ok({ connection }), { status: 200 });
   } catch (error) {
     if (error instanceof ConnectError) {

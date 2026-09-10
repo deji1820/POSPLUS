@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   webhookFindFirst: vi.fn(),
   transaction: vi.fn(),
   enqueueLoyverseSync: vi.fn(),
+  auditLogCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/lib/db", () => ({
       update: mocks.syncRunUpdate,
     },
     webhookEvent: { findFirst: mocks.webhookFindFirst },
+    auditLog: { create: mocks.auditLogCreate },
     $transaction: mocks.transaction,
   },
 }));
@@ -216,6 +218,42 @@ describe("connectLoyverse", () => {
     const failure = await connectLoyverse("org1", "   ").catch((e) => e);
     expect(failure).toBeInstanceOf(ConnectError);
     expect(failure.status).toBe(400);
+  });
+
+  it("writes a §17 integration.connected audit row: sanitized, actor-attributed, no key material", async () => {
+    mockFetch(() => jsonResponse(200, { name: "Biz" }));
+    mocks.auditLogCreate.mockResolvedValue({ id: "audit-1" });
+
+    await connectLoyverse("org1", "plaintext-api-key", "user-42");
+
+    expect(mocks.auditLogCreate).toHaveBeenCalledTimes(1);
+    const { data } = mocks.auditLogCreate.mock.calls[0][0];
+    expect(data).toMatchObject({
+      organizationId: "org1",
+      actorUserId: "user-42",
+      action: "integration.connected",
+      entityType: "LoyverseConnection",
+      entityId: "conn1",
+    });
+    expect(data.afterJson).toMatchObject({
+      status: "connected",
+      initialSyncRunId: "run1",
+    });
+    // §18/§24: the audit row must never carry the key or its envelope.
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toContain("plaintext-api-key");
+    expect(serialized).not.toContain("encryptedApiKey");
+    expect(serialized).not.toContain("aaa:bbb:ccc");
+  });
+
+  it("omits the actor when connect runs without a user context (system path)", async () => {
+    mockFetch(() => jsonResponse(200, { name: "Biz" }));
+    mocks.auditLogCreate.mockResolvedValue({ id: "audit-2" });
+
+    await connectLoyverse("org1", "key");
+
+    const { data } = mocks.auditLogCreate.mock.calls[0][0];
+    expect(data.actorUserId).toBeNull();
   });
 });
 

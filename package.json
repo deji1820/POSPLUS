@@ -19,7 +19,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "rotate-keys": "tsx scripts/rotate-encryption-key.ts",
     "rotate-keys:dry-run": "tsx scripts/rotate-encryption-key.ts --dry-run",
-    "worker": "tsx worker/index.ts"
+    "worker": "tsx --env-file-if-exists=.env worker/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1128.0",

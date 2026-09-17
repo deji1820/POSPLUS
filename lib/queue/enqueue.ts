@@ -124,14 +124,27 @@ export async function enqueueGenerateDocumentPdf(input: {
 }): Promise<void> {
   const jobName = input.jobName as JobName;
   const queue = getQueue(JOB_QUEUES[jobName]);
+  const jobId = `document-pdf-${input.documentId}`;
   try {
+    // BullMQ retains failed jobs for seven days. Adding the same id again is
+    // deliberately deduplicated by BullMQ, which previously meant the
+    // document row was reset to PENDING with no job left to consume it.
+    // Replace only terminal jobs; an active or waiting job remains the
+    // authoritative render for this document.
+    const existing = await queue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === "completed" || state === "failed") {
+        await existing.remove();
+      }
+    }
     await queue.add(
       jobName,
       {
         documentId: input.documentId,
         organizationId: input.organizationId,
       },
-      { jobId: `document-pdf-${input.documentId}` },
+      { jobId },
     );
   } catch (error) {
     throw new QueueUnavailableError({ cause: error });

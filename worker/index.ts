@@ -15,6 +15,7 @@ import { safeJobErrorMessage } from "@/lib/queue/errors";
 import { QUEUE_NAMES, type QueueName } from "@/lib/queue/queues";
 import { jobLog } from "@/worker/log";
 import { resolveProcessor } from "@/worker/registry";
+import { schedulerEnabled, startScheduler, type SchedulerHandle } from "@/worker/scheduler";
 
 const CONCURRENCY: Record<QueueName, number> = {
   "loyverse-webhooks": 5,
@@ -74,11 +75,26 @@ async function main(): Promise<void> {
     });
   }
 
+  let scheduler: SchedulerHandle | null = null;
+  if (schedulerEnabled()) {
+    try {
+      scheduler = await startScheduler();
+    } catch (error) {
+      // The scheduler must never prevent the workers from starting.
+      jobLog("worker", "scheduler failed to start", {
+        reason: safeJobErrorMessage(error),
+      });
+    }
+  } else {
+    jobLog("worker", "scheduler disabled (SCHEDULER_ENABLED=false)", {});
+  }
+
   let closing = false;
   async function shutdown(signal: string): Promise<void> {
     if (closing) return;
     closing = true;
     jobLog("worker", `received ${signal}, draining`, {});
+    if (scheduler) await scheduler.stop();
     await Promise.all(workers.map((w) => w.close()));
     jobLog("worker", "stopped", {});
     process.exit(0);

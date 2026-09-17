@@ -40,6 +40,12 @@ export const JOB_QUEUES = {
   "write-back-stock": "inventory",
   "recalculate-reorder-points": "reorder",
   "calculate-payroll": "payroll",
+  // Nightly maintenance jobs (#33): the scheduler fires all eight nightly
+  // items from SPEC.md §10; reconciliation + stale-sync checks have real
+  // processors, the analytics jobs stay not-implemented stubs until their
+  // domain issues land (recorded dead-letter, never silently dropped).
+  "reconciliation-check": "analytics",
+  "stale-webhook-sync-check": "loyverse-sync",
   "generate-po-pdf": "documents",
   "generate-payslip-pdf": "documents",
   "generate-pnl-pdf": "documents",
